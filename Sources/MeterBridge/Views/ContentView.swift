@@ -9,13 +9,17 @@ struct ContentView: View {
             DeviceBar()
             Divider()
             HStack(alignment: .top, spacing: 0) {
-                SourceList()
-                    .frame(width: 380)
-                Divider()
-                OverlayPlaceholder()
+                if model.showInputs {
+                    SourceList()
+                        .frame(width: 380)
+                        .transition(.move(edge: .leading))
+                    Divider()
+                }
+                MeterStation()
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.chassis)
+        .animation(.easeInOut(duration: 0.2), value: model.showInputs)
     }
 }
 
@@ -47,6 +51,19 @@ private struct DeviceBar: View {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Rescan devices")
+
+            Toggle(isOn: $model.showInputs) {
+                Label("Inputs", systemImage: "slider.horizontal.3")
+            }
+            .toggleStyle(.button)
+            .help("Show or hide input routing")
+
+            Picker("View", selection: $model.viewMode) {
+                ForEach(AppModel.ViewMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 280)
 
             Spacer()
 
@@ -81,32 +98,90 @@ private struct SourceList: View {
     }
 }
 
-/// Stand-in for step 2's overlay spectrograph.
-private struct OverlayPlaceholder: View {
+/// The main "rack unit": spectrum screen on the left, loudness on the
+/// right, and a strip of source chips with live meters underneath.
+private struct MeterStation: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "waveform.path.ecg.rectangle")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(.tertiary)
-            Text("Overlay spectrograph")
-                .font(.headline)
-            Text("Coming in step 2: all enabled sources drawn on one display, each in its own colour.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
-            HStack(spacing: 14) {
-                ForEach(model.setup.sources.filter(\.isEnabled)) { source in
-                    Label(source.name, systemImage: "circle.fill")
-                        .foregroundStyle(source.color)
-                        .font(.caption)
-                }
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                SpectrumScreen()
+                    .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+                LoudnessPanel()
+                    .frame(width: 430)
             }
+            SourceStrip()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.35))
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(LinearGradient(colors: [Color(white: 0.11), Color(white: 0.05)],
+                                     startPoint: .top, endPoint: .bottom))
+        )
+        .overlay(alignment: .topLeading) { Screw().padding(5) }
+        .overlay(alignment: .topTrailing) { Screw().padding(5) }
+        .overlay(alignment: .bottomLeading) { Screw().padding(5) }
+        .overlay(alignment: .bottomTrailing) { Screw().padding(5) }
+        .padding(12)
+    }
+}
+
+/// One chip per enabled source: colour, name, live L/R meter, hide and solo.
+private struct SourceStrip: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if model.activeSources.isEmpty {
+                Text("Switch on a source in Inputs to start metering.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.caption)
+            }
+            ForEach(model.activeSources) { source in
+                let hidden = model.soloSource.map { $0 != source.id } ?? model.hiddenSources.contains(source.id)
+                ScreenBox(padding: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(source.letter)
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .frame(width: 18, height: 18)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(source.color))
+                                .foregroundStyle(.black)
+                            Text(source.name)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.readout)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Button {
+                                model.toggleHidden(source.id)
+                            } label: {
+                                Image(systemName: model.hiddenSources.contains(source.id) ? "eye.slash" : "eye")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.caption)
+                            .help("Hide from the spectrum")
+                            Button {
+                                model.toggleSolo(source.id)
+                            } label: {
+                                Text("S")
+                                    .font(.system(size: 10, weight: .heavy))
+                                    .frame(width: 16, height: 16)
+                                    .background(RoundedRectangle(cornerRadius: 3)
+                                        .fill(model.soloSource == source.id ? Color.yellow : Color.white.opacity(0.1)))
+                                    .foregroundStyle(model.soloSource == source.id ? Color.black : Theme.caption)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Solo on the spectrum")
+                        }
+                        StereoMeter(level: model.levels[source.id], color: source.color)
+                    }
+                }
+                .opacity(hidden ? 0.45 : 1)
+                .frame(maxWidth: 260)
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 

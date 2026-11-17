@@ -1,6 +1,7 @@
 import AudioToolbox
 import CoreAudio
 import Foundation
+import MeterBridgeCore
 import os
 
 /// Per-channel peak and RMS collected since the last `takeSnapshot()`.
@@ -34,6 +35,10 @@ final class InputCapture {
     static let maxFrames: UInt32 = 4096
     fileprivate var maxFrames: UInt32 { Self.maxFrames }
     fileprivate let bufferList: UnsafeMutableAudioBufferListPointer
+
+    /// One lock-free ring per input channel, for spectrum and loudness analysis.
+    let rings: [SampleRing]
+    static let ringCapacity = 1 << 17 // ~2.7 s at 48 kHz
 
     // Audio-thread-only accumulators.
     fileprivate let localPeak: UnsafeMutablePointer<Float>
@@ -117,6 +122,7 @@ final class InputCapture {
         }
         self.unit = unit
         self.bufferList = list
+        self.rings = (0..<n).map { _ in SampleRing(capacity: Self.ringCapacity) }
         self.localPeak = zeroed()
         self.localSumSq = zeroed()
         self.sharedPeak = zeroed()
@@ -208,6 +214,7 @@ private let inputCallback: AURenderCallback = { refCon, flags, timeStamp, _, fra
         }
         capture.localPeak[c] = peak
         capture.localSumSq[c] += sumSq
+        capture.rings[c].write(data, count: frames)
     }
     capture.localFrames += frames
     capture.publishIfPossible()

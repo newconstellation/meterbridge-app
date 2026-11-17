@@ -14,7 +14,7 @@ struct MeterBridgeApp: App {
         WindowGroup("Meter Bridge") {
             ContentView()
                 .environmentObject(model)
-                .frame(minWidth: 860, minHeight: 560)
+                .frame(minWidth: 1180, minHeight: 640)
                 .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)

@@ -16,6 +16,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MeterBridge"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+iconutil -c icns Resources/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 
 # Ad hoc signature (no Apple Developer ID yet). First launch: right-click › Open.
 codesign --force --deep --sign - "$APP"

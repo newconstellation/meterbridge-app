@@ -12,6 +12,25 @@ final class AppModel: ObservableObject {
     @Published private(set) var statusMessage: String = "Starting…"
     @Published private(set) var isCapturing = false
 
+    // Analysis results, refreshed ~30 times a second.
+    @Published private(set) var spectra: [Int: SourceSpectrum] = [:]
+    @Published private(set) var loudness: [Int: LoudnessReading] = [:]
+    @Published private(set) var sessionStart = Date()
+    let spectrogram = SpectrogramModel()
+
+    // View state.
+    enum ViewMode: String, CaseIterable, Identifiable {
+        case curves = "Overlay", bars = "Bands", spectrogram = "Spectrogram"
+        var id: String { rawValue }
+    }
+    @Published var viewMode: ViewMode = .curves
+    @Published var showInputs = true
+    @Published var hiddenSources: Set<Int> = []
+    @Published var soloSource: Int?
+    @Published var loudnessSourceID: Int = 0
+    /// Loudness target in LUFS; integrated readings above it turn red.
+    @Published var targetLUFS: Double = -18
+
     @Published var setup: BridgeSetup {
         didSet {
             store.save(setup)
@@ -24,6 +43,7 @@ final class AppModel: ObservableObject {
     private var meterTimer: Timer?
     private var deviceObserver: AudioObjectPropertyListenerBlock?
     private var lastTick = Date()
+    private var engine: AnalysisEngine?
 
     init() {
         setup = SetupStore().load()
@@ -105,6 +125,9 @@ final class AppModel: ObservableObject {
             let newCapture = try InputCapture(deviceID: id)
             try newCapture.start()
             capture = newCapture
+            engine = AnalysisEngine(sampleRate: newCapture.sampleRate)
+            spectrogram.clear()
+            sessionStart = Date()
             isCapturing = true
             let rate = newCapture.sampleRate > 0 ? String(format: " · %.0f Hz", newCapture.sampleRate) : ""
             statusMessage = "Listening to \(device.name) · \(newCapture.channelCount) inputs\(rate)"
@@ -119,8 +142,11 @@ final class AppModel: ObservableObject {
         meterTimer = nil
         capture?.stop()
         capture = nil
+        engine = nil
         isCapturing = false
         levels = [:]
+        spectra = [:]
+        loudness = [:]
     }
 
     private func startMeterTimer() {
@@ -150,5 +176,55 @@ final class AppModel: ObservableObject {
             next[source.id] = previous.smoothed(toward: reading, elapsed: elapsed)
         }
         levels = next
+
+        let active = setup.activeSources(channelCount: min(snap.peak.count, capture.rings.count))
+        if let engine {
+            let result = engine.process(capture: capture, sources: active, elapsed: elapsed)
+            spectra = result.spectra
+            loudness = result.loudness
+
+            let layers = visibleSources.compactMap { source -> SpectrogramPainter.Layer? in
+                guard let spectrum = result.spectra[source.id] else { return nil }
+                return SpectrogramPainter.Layer(levels: spectrum.rawCurve, color: SourcePalette.color(source.colorIndex))
+            }
+            spectrogram.push(column: SpectrogramPainter.column(layers: layers, rows: spectrogram.rows))
+        }
+        if !active.contains(where: { $0.id == loudnessSourceID }), let first = active.first {
+            loudnessSourceID = first.id
+        }
+    }
+
+    // MARK: - View helpers
+
+    /// Enabled, patched sources that the spectrum views should draw,
+    /// honouring solo and hide.
+    var visibleSources: [SourceConfig] {
+        let active = setup.activeSources(channelCount: currentDevice?.inputChannelCount ?? 0)
+        if let solo = soloSource, let s = active.first(where: { $0.id == solo }) { return [s] }
+        return active.filter { !hiddenSources.contains($0.id) }
+    }
+
+    var activeSources: [SourceConfig] {
+        setup.activeSources(channelCount: currentDevice?.inputChannelCount ?? 0)
+    }
+
+    func toggleHidden(_ id: Int) {
+        if hiddenSources.contains(id) { hiddenSources.remove(id) } else { hiddenSources.insert(id) }
+    }
+
+    func toggleSolo(_ id: Int) {
+        soloSource = soloSource == id ? nil : id
+    }
+
+    /// Clears integrated loudness, range, true-peak max and the session clock.
+    func resetSession() {
+        engine?.resetLoudness()
+        spectrogram.clear()
+        sessionStart = Date()
+    }
+
+    /// True when any visible source is above -60 dBFS.
+    var hasSignal: Bool {
+        levels.values.contains { max($0.peakL, $0.peakR) > -60 }
     }
 }
