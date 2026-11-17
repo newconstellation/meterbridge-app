@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Meter Bridge.app from the Swift package (release, universal binary)
+# Builds Meter Bridge.app from the Swift package (release, Apple Silicon)
 # and signs it ad hoc so macOS will ask for audio input permission.
 #
 #   ./scripts/build-app.sh            -> build/Meter Bridge.app
@@ -9,8 +9,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 APP="build/Meter Bridge.app"
 
-swift build -c release --arch arm64 --arch x86_64
-BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/MeterBridge"
+swift build -c release --arch arm64
+BIN="$(swift build -c release --arch arm64 --show-bin-path)/MeterBridge"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

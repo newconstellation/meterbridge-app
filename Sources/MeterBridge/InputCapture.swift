@@ -60,8 +60,11 @@ final class InputCapture {
 
         func set<T>(_ prop: AudioUnitPropertyID, _ scope: AudioUnitScope, _ element: AudioUnitElement,
                     _ value: inout T, _ step: String) throws {
-            try check(AudioUnitSetProperty(unit, prop, scope, element, &value,
-                                           UInt32(MemoryLayout<T>.size)), step)
+            let status = withUnsafeMutablePointer(to: &value) { ptr in
+                AudioUnitSetProperty(unit, prop, scope, element, UnsafeRawPointer(ptr),
+                                     UInt32(MemoryLayout<T>.size))
+            }
+            try check(status, step)
         }
 
         var channelCountValue = 0

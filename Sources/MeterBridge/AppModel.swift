@@ -75,8 +75,8 @@ final class AppModel: ObservableObject {
             restartCapture()
         case .notDetermined:
             statusMessage = "Waiting for audio input permission…"
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                Task { @MainActor [weak self] in
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor in
                     if granted { self?.restartCapture() } else { self?.showPermissionDenied() }
                 }
             }
