@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MeterBridge",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS("15.0")],
     products: [
         .executable(name: "MeterBridge", targets: ["MeterBridge"]),
         .library(name: "MeterBridgeCore", targets: ["MeterBridgeCore"]),

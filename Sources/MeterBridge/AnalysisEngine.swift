@@ -32,8 +32,8 @@ struct LoudnessReading {
 /// tick is a few small FFTs and filters, well under a millisecond.
 @MainActor
 final class AnalysisEngine {
-    static let fftSize = 8192
-    static let curvePoints = 240
+    nonisolated static let fftSize = 8192
+    nonisolated static let curvePoints = 240
 
     let sampleRate: Double
     let curveMap: FrequencyMap
