@@ -16,10 +16,10 @@ MeterHub::~MeterHub()
     stopTimer();
 }
 
-ModuleContext MeterHub::contextFor (int source)
+ModuleContext MeterHub::contextFor (int meter)
 {
-    auto& processor = engine.getProcessor (source);
-    auto& feed = feeds[(size_t) source];
+    auto& processor = engine.getProcessor (meter);
+    auto& feed = feeds[(size_t) meter];
 
     ModuleContext context { processor.getMeterState(), processor.getParameters() };
     context.spectrumSamples = feed.spectrum.data();
@@ -38,10 +38,18 @@ void MeterHub::tick()
 {
     ++tickCount;
 
-    for (int s = 0; s < Sources::count; ++s)
+    for (int s = 0; s < AudioEngine::maxMeters; ++s)
     {
         auto& processor = engine.getProcessor (s);
         auto& feed = feeds[(size_t) s];
+        if (! engine.isMeterInUse (s))
+        {
+            feed.spectrum.clear();
+            feed.left.clear();
+            feed.right.clear();
+            feed.numScope = 0;
+            continue;
+        }
 
         feed.spectrum.clear();
         for (;;)

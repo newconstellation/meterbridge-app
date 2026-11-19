@@ -15,7 +15,7 @@ Each window picks a view from its toolbar. Open one window per display
 
 | View | For | What it shows |
 | --- | --- | --- |
-| Quad (2 x 2) | 12" display, 1920 x 720 | Four Prism meters for one source; each panel's menu picks its tool |
+| Quad (2 x 2) | 12" display, 1920 x 720 | Four Prism meters for any library source; each panel's menu picks its tool |
 | Row of four | 12" display | Four meters side by side |
 | Meter panel | 8" display, 1920 x 480 | Arched LED peak + average and loudness |
 | Arched LED only | 8" display | The arched LED meter alone |
@@ -46,8 +46,11 @@ rate and buffer size).
 ## Sources
 
 Settings holds a **source library**: as many sources as you like, each with a
-name, a colour, mono or stereo, and its input channels. Up to four are in view
-at once, in slots A to D.
+name, a colour, mono or stereo, and its input channels. Every library source
+is metered all the time (up to 32), so the grid views (Quad, Row of four, Meter
+panel, Arched LED) can pick any of them from the toolbar, and switching shows
+its loudness history straight away. The overlay shows up to four at once, in
+slots A to D.
 
 - A stereo source takes one slot. Its trace averages the power of L and R per
   frequency, so out-of-phase content never cancels. Loudness stays true stereo.

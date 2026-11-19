@@ -51,7 +51,7 @@ private:
     MeterHub& hub;
 
     juce::String viewId;
-    int source = 0;
+    juce::String sourceId;   ///< library source shown by the grid views
     std::map<juce::String, juce::StringArray> kindsByView;
     OverlayView::Style overlayStyle = OverlayView::Style::grey3d;
     int overlayMask = 0xf;

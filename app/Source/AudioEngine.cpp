@@ -13,11 +13,12 @@ AudioEngine::AudioEngine (AppSettings& s) : settings (s)
     if (! anySlot && ! library.empty())
         slotIds[0] = library.front().id;   // first run: show the first source in slot A
 
+    for (auto& m : meters)
+        m.processor = std::make_unique<PrismMeterProcessor>();
+
+    assignMeters();
     for (int i = 0; i < Sources::count; ++i)
-    {
-        processors[(size_t) i] = std::make_unique<PrismMeterProcessor>();
         applySlot (i);
-    }
 
     // Inputs only: Meter Bridge never plays anything.
     const auto saved = settings.loadAudioDeviceState();
@@ -60,6 +61,7 @@ const SourceDef* AudioEngine::findSource (const juce::String& id) const
 void AudioEngine::setLibrary (std::vector<SourceDef> newLibrary)
 {
     library = std::move (newLibrary);
+    assignMeters();
     for (int i = 0; i < Sources::count; ++i)
         applySlot (i);
     saveState();
@@ -78,37 +80,73 @@ void AudioEngine::setSlot (int slot, const juce::String& sourceId)
         onSourcesChanged();
 }
 
-/// Points a slot's route at its source's channels. A new source in the slot
-/// starts its loudness readings fresh. A mono source feeds the same channel
-/// to both sides of the meter (dual mono, as if panned centre).
-void AudioEngine::applySlot (int slot)
+int AudioEngine::meterFor (const juce::String& sourceId) const noexcept
 {
-    auto& route = routes[(size_t) slot];
-    auto& config = configs[(size_t) slot];
-    const auto* def = findSource (slotIds[(size_t) slot]);
+    if (sourceId.isEmpty())
+        return -1;
+    for (int m = 0; m < maxMeters; ++m)
+        if (meterOwner[(size_t) m] == sourceId)
+            return m;
+    return -1;
+}
 
-    const bool newSource = config.sourceId != (def != nullptr ? def->id : juce::String());
+/// Gives every library source its own meter. A source keeps its meter (and
+/// its loudness history) while it stays in the library; a freed meter that is
+/// given to a new source starts fresh. A mono source feeds its one channel to
+/// both sides of the meter (dual mono, as if panned centre).
+void AudioEngine::assignMeters()
+{
+    for (int m = 0; m < maxMeters; ++m)
+        if (meterOwner[(size_t) m].isNotEmpty() && findSource (meterOwner[(size_t) m]) == nullptr)
+        {
+            meters[(size_t) m].enabled.store (false);
+            meterOwner[(size_t) m] = {};
+        }
 
-    config = {};
-    if (def != nullptr)
+    for (const auto& def : library)
+    {
+        int m = meterFor (def.id);
+        if (m < 0)
+        {
+            for (int k = 0; k < maxMeters && m < 0; ++k)
+                if (meterOwner[(size_t) k].isEmpty())
+                    m = k;
+            if (m < 0)
+                continue;   // library is larger than maxMeters: this source is not metered
+            meterOwner[(size_t) m] = def.id;
+            meters[(size_t) m].processor->requestReset();
+        }
+
+        auto& meter = meters[(size_t) m];
+        meter.left.store (juce::jlimit (0, maxDeviceChannels - 1, def.left));
+        meter.right.store (juce::jlimit (0, maxDeviceChannels - 1, def.rightChannel()));
+        meter.enabled.store (true);
+    }
+}
+
+SourceConfig AudioEngine::getSourceById (const juce::String& sourceId) const
+{
+    SourceConfig config;
+    if (const auto* def = findSource (sourceId))
     {
         config.enabled = true;
         config.sourceId = def->id;
         config.name = def->name;
         config.colour = def->colour;
         config.stereo = def->stereo;
-        route.left.store (juce::jlimit (0, maxDeviceChannels - 1, def->left));
-        route.right.store (juce::jlimit (0, maxDeviceChannels - 1, def->rightChannel()));
+        config.meter = meterFor (def->id);
     }
-    route.enabled.store (config.enabled);
-
-    if (newSource && processors[(size_t) slot] != nullptr)
-        processors[(size_t) slot]->requestReset();
+    return config;
 }
 
-int AudioEngine::readStereoSamples (int slot, float* left, float* right, int maxSamples) noexcept
+void AudioEngine::applySlot (int slot)
 {
-    auto& route = routes[(size_t) slot];
+    configs[(size_t) slot] = getSourceById (slotIds[(size_t) slot]);
+}
+
+int AudioEngine::readStereoSamples (int meter, float* left, float* right, int maxSamples) noexcept
+{
+    auto& route = meters[(size_t) meter];
     const auto scope = route.fifo.read (juce::jmin (maxSamples, route.fifo.getNumReady()));
     int done = 0;
     for (auto [start, size] : { std::pair { scope.startIndex1, scope.blockSize1 }, std::pair { scope.startIndex2, scope.blockSize2 } })
@@ -179,8 +217,8 @@ juce::String AudioEngine::getDeviceName() const
 
 void AudioEngine::resetAll()
 {
-    for (auto& p : processors)
-        p->requestReset();
+    for (auto& m : meters)
+        m.processor->requestReset();
 }
 
 /// Every source can pick any channel, so keep all of the device's inputs open.
@@ -225,10 +263,10 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     const double rate = device->getCurrentSampleRate() > 0 ? device->getCurrentSampleRate() : 48000.0;
     sampleRate.store (rate);
 
-    for (auto& p : processors)
+    for (auto& m : meters)
     {
-        p->setRateAndBufferSizeDetails (rate, chunkSize);
-        p->prepareToPlay (rate, chunkSize);
+        m.processor->setRateAndBufferSizeDetails (rate, chunkSize);
+        m.processor->prepareToPlay (rate, chunkSize);
     }
 }
 
@@ -251,10 +289,10 @@ void AudioEngine::prepareOffline (double rate, int numInputs)
     for (int ch = 0; ch < juce::jmin (numInputs, maxDeviceChannels); ++ch)
         activeIndex[(size_t) ch] = ch;
     sampleRate.store (rate);
-    for (auto& p : processors)
+    for (auto& m : meters)
     {
-        p->setRateAndBufferSizeDetails (rate, chunkSize);
-        p->prepareToPlay (rate, chunkSize);
+        m.processor->setRateAndBufferSizeDetails (rate, chunkSize);
+        m.processor->prepareToPlay (rate, chunkSize);
     }
 }
 
@@ -266,9 +304,9 @@ void AudioEngine::processInputs (const float* const* inputs, int numInputs, int 
         return (i >= 0 && i < numInputs) ? inputs[i] : nullptr;
     };
 
-    for (size_t s = 0; s < routes.size(); ++s)
+    for (size_t s = 0; s < meters.size(); ++s)
     {
-        auto& route = routes[s];
+        auto& route = meters[s];
         if (! route.enabled.load (std::memory_order_relaxed))
             continue;
 
@@ -290,7 +328,7 @@ void AudioEngine::processInputs (const float* const* inputs, int numInputs, int 
             copy (0, left);
             copy (1, right);
 
-            processors[s]->processBlock (route.buffer, route.midi);
+            route.processor->processBlock (route.buffer, route.midi);
 
             // L / R for the overlay. If the UI falls behind, newest samples are dropped.
             const auto scope = route.fifo.write (juce::jmin (n, route.fifo.getFreeSpace()));

@@ -17,7 +17,9 @@ DisplayContent::DisplayContent (MeterHub& h, const juce::ValueTree& state)
     setWantsKeyboardFocus (true);
 
     // Restore
-    source = juce::jlimit (0, Sources::count - 1, (int) state.getProperty ("source", 0));
+    sourceId = state.getProperty ("sourceId").toString();
+    if (sourceId.isEmpty())   // older saved windows stored a slot number
+        sourceId = hub.getEngine().getSlotSourceId (juce::jlimit (0, Sources::count - 1, (int) state.getProperty ("source", 0)));
     overlayStyle = OverlayView::styleFromId (state.getProperty ("overlayStyle", "grey3d").toString());
     overlayMask = state.getProperty ("overlayShown", 0xf);
     overlayAveraging = state.getProperty ("overlayAveraging", 2);
@@ -35,7 +37,10 @@ DisplayContent::DisplayContent (MeterHub& h, const juce::ValueTree& state)
     refreshSourceNames();
     sourceBox.onChange = [this]
     {
-        source = juce::jmax (0, sourceBox.getSelectedItemIndex());
+        const auto& library = hub.getEngine().getLibrary();
+        const int index = sourceBox.getSelectedId() - 1;
+        if (index >= 0 && index < (int) library.size())
+            sourceId = library[(size_t) index].id;
         if (grid != nullptr)
             grid->resetDisplay();
         stateChanged();
@@ -99,17 +104,26 @@ void DisplayContent::styleCombo (juce::ComboBox& box)
 
 void DisplayContent::refreshSourceNames()
 {
-    sourceBox.clear (juce::dontSendNotification);
-    for (int i = 0; i < Sources::count; ++i)
-    {
-        const auto config = hub.getEngine().getSource (i);
-        sourceBox.addItem (Sources::letter (i) + juce::String::fromUTF8 (" \xc2\xb7 ")
-                               + (config.enabled ? config.name : juce::String ("empty slot")),
-                           i + 1);
-    }
-    sourceBox.setSelectedItemIndex (source, juce::dontSendNotification);
-
+    // Grid views can show any source in the library.
     auto& engine = hub.getEngine();
+    const auto& library = engine.getLibrary();
+    if (engine.findSource (sourceId) == nullptr)
+        sourceId = engine.getSlotSourceId (0).isNotEmpty() ? engine.getSlotSourceId (0)
+                                                           : (library.empty() ? juce::String() : library.front().id);
+
+    sourceBox.clear (juce::dontSendNotification);
+    for (int k = 0; k < (int) library.size(); ++k)
+    {
+        const auto& def = library[(size_t) k];
+        sourceBox.addItem ((def.name.isNotEmpty() ? def.name : "Source " + juce::String (k + 1))
+                               + "   (" + (def.stereo ? "stereo " : "mono ") + def.channelText() + ")",
+                           k + 1);
+        if (def.id == sourceId)
+            sourceBox.setSelectedId (k + 1, juce::dontSendNotification);
+    }
+    sourceBox.setTextWhenNoChoicesAvailable ("No sources: add some in Settings");
+
+
     const auto devices = engine.getInputDeviceNames();
     deviceBox.clear (juce::dontSendNotification);
     deviceBox.addItemList (devices, 1);
@@ -122,7 +136,7 @@ juce::ValueTree DisplayContent::getState() const
 {
     juce::ValueTree state ("Window");
     state.setProperty ("view", viewId, nullptr);
-    state.setProperty ("source", source, nullptr);
+    state.setProperty ("sourceId", sourceId, nullptr);
     state.setProperty ("overlayStyle", OverlayView::styleId (overlay != nullptr ? overlay->getStyle() : overlayStyle), nullptr);
     state.setProperty ("overlayShown", overlay != nullptr ? overlay->getShownMask() : overlayMask, nullptr);
     state.setProperty ("overlayAveraging", overlay != nullptr ? overlay->getAveragingIndex() : overlayAveraging, nullptr);
@@ -187,7 +201,11 @@ void DisplayContent::stateChanged()
 void DisplayContent::meterTick (MeterHub& h)
 {
     if (grid != nullptr)
-        grid->update (h, source);
+    {
+        const int meter = h.getEngine().meterFor (sourceId);
+        if (meter >= 0)
+            grid->update (h, meter);
+    }
     if (overlay != nullptr)
         overlay->update (h);
 }

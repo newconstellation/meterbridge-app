@@ -1,7 +1,7 @@
 // Renders a Meter Bridge window to a PNG with four synthetic keyboards, for
 // design reviews and CI screenshots. No audio device needed.
 //
-//   MeterBridgeSnapshot <view> <out.png> [seconds] [overlayStyle] [width] [height]
+//   MeterBridgeSnapshot <view> <out.png> [seconds] [overlayStyle] [width] [height] [sourceId]
 //   view: quad | strip4 | panel | arc | overlay | settings
 //   overlayStyle: grey3d | split | quietBlue
 
@@ -70,6 +70,8 @@ int main (int argc, char* argv[])
     juce::ValueTree state ("Window");
     state.setProperty ("view", view, nullptr);
     state.setProperty ("overlayStyle", style, nullptr);
+    if (argc > 7)
+        state.setProperty ("sourceId", juce::String (argv[7]), nullptr);   // src0 .. src4
     DisplayContent content (hub, state);
     content.setSize (width, height);
 

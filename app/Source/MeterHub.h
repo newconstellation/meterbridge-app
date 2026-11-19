@@ -6,7 +6,7 @@
 #include <array>
 #include <vector>
 
-/// The one UI clock (30 Hz). Each tick it drains every source's analyser
+/// The one UI clock (30 Hz). Each tick it drains every meter's analyser
 /// FIFOs once and hands the samples to every open window, so several windows
 /// and slots can show the same source without stealing each other's samples.
 class MeterHub final : private juce::Timer
@@ -26,13 +26,13 @@ public:
 
     AudioEngine& getEngine() noexcept { return engine; }
 
-    /// Context for Prism's meter modules, for one source, valid during a tick.
-    ModuleContext contextFor (int source);
+    /// Context for Prism's meter modules, for one engine meter (see
+    /// AudioEngine::meterFor), valid during a tick.
+    ModuleContext contextFor (int meter);
 
-    const std::vector<float>& getSpectrumSamples (int source) const { return feeds[(size_t) source].spectrum; }
-    const std::vector<float>& getLeftSamples (int slot) const { return feeds[(size_t) slot].left; }
-    const std::vector<float>& getRightSamples (int slot) const { return feeds[(size_t) slot].right; }
-    const MeterState& getState (int source) { return engine.getProcessor (source).getMeterState(); }
+    const std::vector<float>& getLeftSamples (int meter) const { return feeds[(size_t) meter].left; }
+    const std::vector<float>& getRightSamples (int meter) const { return feeds[(size_t) meter].right; }
+    const MeterState& getState (int meter) { return engine.getProcessor (meter).getMeterState(); }
 
     bool spectrumTilt = true;
 
@@ -51,7 +51,7 @@ private:
     };
 
     AudioEngine& engine;
-    std::array<Feed, Sources::count> feeds;
+    std::array<Feed, AudioEngine::maxMeters> feeds;
     std::vector<float> scratch = std::vector<float> (8192), scratchRight = std::vector<float> (8192);
     juce::ListenerList<Listener> listeners;
     int tickCount = 0;

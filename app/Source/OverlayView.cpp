@@ -226,17 +226,20 @@ void OverlayView::update (MeterHub& hub)
         names[(size_t) s] = config.displayName (s);
         colours[(size_t) s] = config.colour;
 
-        const auto& state = hub.getState (s);
+        auto& c = channels[(size_t) s];
+        if (! config.enabled || config.meter < 0)
+        {
+            enabled[(size_t) s] = false;
+            continue;
+        }
+
+        const auto& state = hub.getState (config.meter);
         integrated[(size_t) s] = state.integrated.load();
         momentary[(size_t) s] = state.momentary.load();
 
-        auto& c = channels[(size_t) s];
-        if (! config.enabled)
-            continue;
-
         c.stereo = config.stereo;
-        const auto& left = hub.getLeftSamples (s);
-        const auto& right = hub.getRightSamples (s);
+        const auto& left = hub.getLeftSamples (config.meter);
+        const auto& right = hub.getRightSamples (config.meter);
         bool fresh = pushSamples (c.sides[0], left.data(), (int) left.size());
         if (c.stereo)
             fresh = pushSamples (c.sides[1], right.data(), (int) right.size()) || fresh;

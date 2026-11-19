@@ -31,6 +31,7 @@ struct SourceConfig
     juce::String name;
     juce::Colour colour { 0xff8d96a0 };
     bool stereo = true;
+    int meter = -1;             ///< the engine meter that measures this source
 
     juce::String displayName (int slot) const;
 };

@@ -10,8 +10,9 @@
 #include <memory>
 #include <vector>
 
-/// Opens the chosen input device and runs one Prism meter processor per
-/// source. The audio callback only copies each source's two channels into a
+/// Opens the chosen input device and runs one Prism meter processor for every
+/// source in the library (up to maxMeters), so any view can show any source
+/// at once, with its loudness history already running. The audio callback only copies each source's two channels into a
 /// preallocated buffer and hands it to that source's processor: no locks, no
 /// allocation, no I/O on the audio thread.
 class AudioEngine final : private juce::AudioIODeviceCallback,
@@ -22,10 +23,19 @@ public:
     ~AudioEngine() override;
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
-    PrismMeterProcessor& getProcessor (int source) noexcept { return *processors[(size_t) source]; }
+    /// Most sources the library can meter at once.
+    static constexpr int maxMeters = 32;
 
-    /// What view slot A-D shows now.
+    PrismMeterProcessor& getProcessor (int meter) noexcept { return *meters[(size_t) meter].processor; }
+    bool isMeterInUse (int meter) const noexcept { return meterOwner[(size_t) meter].isNotEmpty(); }
+
+    /// The meter measuring a library source, or -1.
+    int meterFor (const juce::String& sourceId) const noexcept;
+
+    /// What overlay slot A-D shows now.
     SourceConfig getSource (int slot) const { return configs[(size_t) slot]; }
+    /// Any library source, by id.
+    SourceConfig getSourceById (const juce::String& sourceId) const;
 
     /// The source library. Changing it re-routes any slot showing an edited source.
     const std::vector<SourceDef>& getLibrary() const noexcept { return library; }
@@ -39,9 +49,9 @@ public:
     /// Called on the message thread after the library or a slot changes.
     std::function<void()> onSourcesChanged;
 
-    /// Left / right samples per slot for the overlay's spectra. Single
+    /// Left / right samples per meter for the overlay's spectra. Single
     /// producer (audio thread), single consumer (the UI hub).
-    int readStereoSamples (int slot, float* left, float* right, int maxSamples) noexcept;
+    int readStereoSamples (int meter, float* left, float* right, int maxSamples) noexcept;
 
     /// Input devices of the current driver type (Core Audio on a Mac).
     juce::StringArray getInputDeviceNames() const;
@@ -79,12 +89,14 @@ private:
 
     void openAllInputs();
     void applySlot (int slot);
+    void assignMeters();
 
     static constexpr int maxDeviceChannels = 256;
     static constexpr int chunkSize = 2048;
 
-    struct Route
+    struct Meter
     {
+        std::unique_ptr<PrismMeterProcessor> processor;
         std::atomic<bool> enabled { false };
         std::atomic<int> left { 0 }, right { 1 };
         juce::AudioBuffer<float> buffer { 2, chunkSize };
@@ -97,8 +109,8 @@ private:
 
     AppSettings& settings;
     juce::AudioDeviceManager deviceManager;
-    std::array<std::unique_ptr<PrismMeterProcessor>, Sources::count> processors;
-    std::array<Route, Sources::count> routes;
+    std::array<Meter, maxMeters> meters;
+    std::array<juce::String, maxMeters> meterOwner;   // source id per meter (message thread)
     std::array<SourceConfig, Sources::count> configs;
     std::vector<SourceDef> library;
     std::array<juce::String, Sources::count> slotIds;

@@ -40,7 +40,7 @@ void applyMeterScales (AudioEngine& engine, const juce::ValueTree& scales)
         if (! scales.hasProperty (spec.paramId))
             continue;
         const int index = scales.getProperty (spec.paramId);
-        for (int s = 0; s < Sources::count; ++s)
+        for (int s = 0; s < AudioEngine::maxMeters; ++s)
             if (auto* p = engine.getProcessor (s).getParameters().getParameter (spec.paramId))
                 p->setValueNotifyingHost (p->convertTo0to1 ((float) index));
     }
@@ -279,6 +279,7 @@ void SettingsContent::rebuildLibraryRows()
     }
 
     libraryList->setSize (juce::jmax (100, libraryViewport.getMaximumVisibleWidth()), libraryList->idealHeight());
+    addSourceButton.setEnabled ((int) lib.size() < AudioEngine::maxMeters);
     refreshSlots();
 }
 
@@ -364,6 +365,8 @@ void SettingsContent::libraryEdited()
 void SettingsContent::addSource()
 {
     auto lib = engine.getLibrary();
+    if ((int) lib.size() >= AudioEngine::maxMeters)
+        return;
     int nextChannel = 0;
     for (const auto& d : lib)
         nextChannel = juce::jmax (nextChannel, d.rightChannel() + 1);
