@@ -129,6 +129,47 @@ juce::StringArray AudioEngine::getInputChannelNames() const
     return {};
 }
 
+juce::StringArray AudioEngine::getInputDeviceNames() const
+{
+    if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+        return type->getDeviceNames (true);
+    return {};
+}
+
+juce::String AudioEngine::getCurrentInputDeviceName() const
+{
+    return deviceManager.getAudioDeviceSetup().inputDeviceName;
+}
+
+juce::String AudioEngine::setInputDevice (const juce::String& name)
+{
+    auto setup = deviceManager.getAudioDeviceSetup();
+    if (setup.inputDeviceName == name && deviceManager.getCurrentAudioDevice() != nullptr)
+        return {};
+    setup.inputDeviceName = name;
+    setup.outputDeviceName = {};
+    setup.useDefaultInputChannels = true;
+    setup.outputChannels.clear();
+    setup.useDefaultOutputChannels = false;
+    const auto error = deviceManager.setAudioDeviceSetup (setup, true);
+    openAllInputs();
+    return error;
+}
+
+juce::String AudioEngine::setSampleRate (double rate)
+{
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.sampleRate = rate;
+    return deviceManager.setAudioDeviceSetup (setup, true);
+}
+
+juce::String AudioEngine::setBufferSize (int samples)
+{
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.bufferSize = samples;
+    return deviceManager.setAudioDeviceSetup (setup, true);
+}
+
 juce::String AudioEngine::getDeviceName() const
 {
     if (auto* device = deviceManager.getCurrentAudioDevice())

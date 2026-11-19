@@ -30,8 +30,18 @@ Spectrograms in the meters run vertically (newest at the top).
 - **Split**: traces on a clean graph, the summed heat-map waterfall below.
 - **Quiet blue**: the summed waterfall in one dim blue behind the traces.
 
+**Averaging** (overlay title strip): off, 0.1, 0.3, 1 or 3 seconds, for how
+quickly the traces and the background follow the music. History is drawn on a
+fixed dB scale and never changes once drawn; it only scrolls back.
+
 In the overlay sidebar, the eye hides a source, S solos it, and clicking a
 name swaps another library source into that slot.
+
+## Input device
+
+One device at a time, for example Dante Virtual Soundcard. Pick it from the
+INPUT menu on any window's toolbar, or in Settings > Audio device (with sample
+rate and buffer size).
 
 ## Sources
 

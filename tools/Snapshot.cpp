@@ -2,13 +2,14 @@
 // design reviews and CI screenshots. No audio device needed.
 //
 //   MeterBridgeSnapshot <view> <out.png> [seconds] [overlayStyle] [width] [height]
-//   view: quad | strip4 | panel | arc | overlay
+//   view: quad | strip4 | panel | arc | overlay | settings
 //   overlayStyle: grey3d | split | quietBlue
 
 #include "AppSettings.h"
 #include "AudioEngine.h"
 #include "DisplayWindow.h"
 #include "MeterHub.h"
+#include "SettingsWindow.h"
 
 #include <cmath>
 
@@ -102,7 +103,16 @@ int main (int argc, char* argv[])
         hub.tick();
     }
 
-    auto image = content.createComponentSnapshot (content.getLocalBounds(), true, 1.5f);
+    juce::Image image;
+    if (view == "settings")
+    {
+        SettingsContent settingsView (engine, settings);
+        image = settingsView.createComponentSnapshot (settingsView.getLocalBounds(), true, 1.5f);
+    }
+    else
+    {
+        image = content.createComponentSnapshot (content.getLocalBounds(), true, 1.5f);
+    }
     juce::FileOutputStream stream (out);
     if (! stream.openedOk())
         return 1;

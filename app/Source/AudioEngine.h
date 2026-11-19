@@ -43,6 +43,14 @@ public:
     /// producer (audio thread), single consumer (the UI hub).
     int readStereoSamples (int slot, float* left, float* right, int maxSamples) noexcept;
 
+    /// Input devices of the current driver type (Core Audio on a Mac).
+    juce::StringArray getInputDeviceNames() const;
+    juce::String getCurrentInputDeviceName() const;
+    /// Opens another input device; returns an error message, or empty on success.
+    juce::String setInputDevice (const juce::String& name);
+    juce::String setSampleRate (double rate);
+    juce::String setBufferSize (int samples);
+
     /// Names of the open device's input channels ("1", "2" ... when it has none).
     juce::StringArray getInputChannelNames() const;
     juce::String getDeviceName() const;

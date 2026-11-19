@@ -49,7 +49,45 @@ OverlayView::OverlayView()
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (styleButton));
     };
     addAndMakeVisible (styleButton);
+
+    averagingButton.setTooltip ("Spectrum averaging: how quickly the traces and background follow the music");
+    averagingButton.setColour (juce::TextButton::buttonColourId, Theme::face);
+    averagingButton.setColour (juce::TextButton::textColourOffId, Theme::spectrumAccent);
+    averagingButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Averaging (response time)");
+        const char* labels[] { "Off (instant)", "Fast  0.1 s", "Medium  0.3 s", "Slow  1 s", "Very slow  3 s" };
+        for (int i = 0; i < (int) averagingChoices.size(); ++i)
+            menu.addItem (labels[i], true, i == averagingIndex, [this, i] { setAveragingIndex (i); });
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (averagingButton));
+    };
+    addAndMakeVisible (averagingButton);
+
     setStyle (Style::grey3d);
+    setAveragingIndex (2);
+}
+
+void OverlayView::setAveragingIndex (int index)
+{
+    averagingIndex = juce::jlimit (0, (int) averagingChoices.size() - 1, index);
+    const float seconds = averagingChoices[(size_t) averagingIndex];
+    averagingButton.setButtonText ((seconds <= 0.0f ? juce::String ("Avg: off") : "Avg: " + juce::String (seconds, seconds < 1.0f ? 1 : 0) + " s")
+                                   + juce::String::fromUTF8 (" \xe2\x96\xbe"));
+    applyAveraging();
+    if (onSettingsChanged)
+        onSettingsChanged();
+}
+
+/// Exponential averaging per analysis frame, set from the response time.
+void OverlayView::applyAveraging()
+{
+    const float seconds = averagingChoices[(size_t) averagingIndex];
+    const float frameSeconds = (float) hopSize / (float) sampleRate;
+    const float amount = seconds <= 0.0f ? 0.0f : std::exp (-frameSeconds / seconds);
+    for (auto& c : channels)
+        for (auto& side : c.sides)
+            side.analyzer.setAveraging (amount);
 }
 
 void OverlayView::setStyle (Style s)
@@ -87,7 +125,6 @@ void OverlayView::prepare (double rate)
         for (auto& side : c.sides)
         {
             side.analyzer.prepare (fftOrder, sampleRate);
-            side.analyzer.setAveraging (0.7f);
             side.ring.assign ((size_t) side.analyzer.getFftSize(), 0.0f);
             side.frame.assign (side.ring.size(), 0.0f);
             side.ringWrite = side.samplesSinceFrame = 0;
@@ -95,6 +132,7 @@ void OverlayView::prepare (double rate)
         c.trace.fill (-150.0f);
         c.peak.fill (-150.0f);
     }
+    applyAveraging();
 }
 
 void OverlayView::resetDisplay()
@@ -103,6 +141,8 @@ void OverlayView::resetDisplay()
         for (auto& side : c.sides)
             side.analyzer.reset();
     std::fill (history.begin(), history.end(), -150.0f);
+    std::fill (slices.begin(), slices.end(), -150.0f);
+    pendingRows = 0;
     rebuildWaterfallImage();
     repaint();
 }
@@ -240,7 +280,6 @@ void OverlayView::addHistoryRow()
     historyNewest = (historyNewest + historyRows - 1) % historyRows;
     float* row = history.data() + (size_t) historyNewest * historyCols;
 
-    float rowMax = -150.0f;
     for (int x = 0; x < historyCols; ++x)
     {
         const float lo = freqAt (((float) x - 0.5f) / (float) (historyCols - 1));
@@ -252,12 +291,28 @@ void OverlayView::addHistoryRow()
                 power += dbToPower (bandLevel (channels[(size_t) s], lo, hi, false));
 
         row[x] = power > 0.0f ? 10.0f * std::log10 (power) : -150.0f;
-        rowMax = juce::jmax (rowMax, row[x]);
     }
 
-    // The colour scale follows the music: jumps up at once, eases down slowly.
-    waterfallTop = juce::jlimit (-70.0f, 0.0f, juce::jmax (rowMax, waterfallTop - 0.05f));
+    commitRowTo3d (row);
     rebuildWaterfallImage();
+}
+
+/// Gathers rows into the pending 3D slice (loudest per column). Every few rows
+/// the slice is committed: it never changes again, it only moves back.
+void OverlayView::commitRowTo3d (const float* row)
+{
+    if (pendingRows == 0)
+        pendingSlice.fill (-150.0f);
+
+    for (int x = 0; x < sliceCols; ++x)
+        pendingSlice[(size_t) x] = juce::jmax (pendingSlice[(size_t) x], row[x * 2], row[x * 2 + 1]);
+
+    if (++pendingRows < rowsPerSlice)
+        return;
+
+    pendingRows = 0;
+    sliceNewest = (sliceNewest + slices3d - 1) % slices3d;
+    std::copy (pendingSlice.begin(), pendingSlice.end(), slices.begin() + (std::ptrdiff_t) sliceNewest * sliceCols);
 }
 
 void OverlayView::rebuildWaterfallImage()
@@ -275,12 +330,12 @@ void OverlayView::rebuildWaterfallImage()
             juce::Colour colour;
             if (style == Style::split)
             {
-                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - (waterfallTop - 42.0f)) / 42.0f), 1.4f);
+                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - (heatTopDb - heatRangeDb)) / heatRangeDb), 1.4f);
                 colour = Theme::heat (0.92f * v);
             }
             else
             {
-                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - (waterfallTop - 50.0f)) / 50.0f), 1.6f);
+                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - (heatTopDb - heatRangeDb)) / heatRangeDb), 1.6f);
                 const auto blue = juce::Colour::fromFloatRGBA ((20.0f + 60.0f * v) / 255.0f, (60.0f + 120.0f * v) / 255.0f,
                                                                (90.0f + 150.0f * v) / 255.0f, 1.0f);
                 colour = Theme::face.interpolatedWith (blue, 0.55f * v);
@@ -301,6 +356,7 @@ void OverlayView::resized()
 
     styleButton.setBounds (juce::Rectangle<float> (mainPanel.getRight() - 186.0f, mainPanel.getY() + 2.0f, 180.0f,
                                                    Theme::titleHeight - 4.0f).toNearestInt());
+    averagingButton.setBounds (styleButton.getBounds().translated (-124, 0).withWidth (118));
 }
 
 juce::Rectangle<float> OverlayView::plotArea (juce::Rectangle<float> face, bool withHzLabels) const
@@ -389,21 +445,18 @@ static juce::Colour ridgeColour (float level, float t) noexcept
 
 void OverlayView::drawGrey3d (juce::Graphics& g, juce::Rectangle<float> plot) const
 {
-    constexpr int slices = 40;
-    constexpr int colStep = 2;
-    const int rowStep = juce::jmax (1, historyRows / slices);
     const float depthHeight = plot.getHeight() * 0.62f;
     const float amplitude = plot.getHeight() * 0.36f;
 
     // Back (oldest) to front (newest), so nearer ridges hide what is behind them.
     // Slices stack straight up with no perspective, so each frequency stays on
     // its own Hz mark at every depth.
-    for (int k = slices - 1; k >= 0; --k)
+    for (int k = slices3d - 1; k >= 0; --k)
     {
-        const float t = (float) k / (float) (slices - 1);
+        const float t = (float) k / (float) (slices3d - 1);
         const float base = plot.getBottom() - 2.0f - t * depthHeight;
         const float height = amplitude * (1.0f - 0.15f * t);
-        const float* row = history.data() + (size_t) ((historyNewest + k * rowStep) % historyRows) * historyCols;
+        const float* row = this->slices.data() + (size_t) ((sliceNewest + k) % slices3d) * sliceCols;
 
         juce::Path ridge;
         juce::ColourGradient lit (juce::Colours::black, plot.getX(), base, juce::Colours::black, plot.getRight(), base, false);
@@ -411,16 +464,16 @@ void OverlayView::drawGrey3d (juce::Graphics& g, juce::Rectangle<float> plot) co
         lit.clearColours();
         face.clearColours();
 
-        for (int x = 0; x < historyCols; x += colStep)
+        for (int x = 0; x < sliceCols; ++x)
         {
-            const float u = (float) x / (float) (historyCols - 1);
+            const float u = (float) x / (float) (sliceCols - 1);
             const float px = plot.getX() + u * plot.getWidth();
-            const float level = std::pow (juce::jlimit (0.0f, 1.0f, (row[x] - (waterfallTop - 34.0f)) / 34.0f), 1.8f);
+            const float level = std::pow (juce::jlimit (0.0f, 1.0f, (row[x] - (heatTopDb - 48.0f)) / 48.0f), 1.8f);
             const float py = base - level * height;
             if (x == 0) ridge.startNewSubPath (px, py);
             else        ridge.lineTo (px, py);
 
-            if (x % (colStep * 2) == 0)
+            if (x % 2 == 0)
             {
                 const auto c = ridgeColour (level, t);
                 // Quiet floor lines stay faint so the ridges carry the picture.
@@ -472,8 +525,8 @@ void OverlayView::paint (juce::Graphics& g)
         g.drawImage (waterfall, wf, juce::RectanglePlacement::stretchToFit);
         g.setColour (Theme::textSecondary);
         g.setFont (Theme::font (9.5f));
-        g.drawText ("now", content.getX() + 4.0f, wf.getY(), 28.0f, 12.0f, juce::Justification::left);
-        g.drawText ("time", content.getX() + 4.0f, wf.getBottom() - 12.0f, 28.0f, 12.0f, juce::Justification::left);
+        g.drawText ("now", juce::Rectangle<float> (content.getX() + 4.0f, wf.getY(), 28.0f, 12.0f), juce::Justification::left);
+        g.drawText ("time", juce::Rectangle<float> (content.getX() + 4.0f, wf.getBottom() - 12.0f, 28.0f, 12.0f), juce::Justification::left);
         g.setColour (Theme::textPrimary.withAlpha (0.8f));
         g.drawText ("sum of shown inputs", wf.withHeight (14.0f).withTrimmedRight (8.0f), juce::Justification::right);
     }

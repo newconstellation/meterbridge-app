@@ -32,6 +32,11 @@ public:
     static juce::String styleId (Style);
     static Style styleFromId (const juce::String&);
 
+    /// Spectrum averaging (response time) choices, in seconds.
+    static constexpr std::array<float, 5> averagingChoices { 0.0f, 0.1f, 0.3f, 1.0f, 3.0f };
+    void setAveragingIndex (int index);
+    int getAveragingIndex() const noexcept { return averagingIndex; }
+
     /// Bit i set = source i shown.
     int getShownMask() const noexcept;
     void setShownMask (int mask);
@@ -52,6 +57,14 @@ private:
     static constexpr int historyCols = 360;
     static constexpr int historyRows = 160;
     static constexpr float topDb = 0.0f, bottomDb = -84.0f;
+
+    // Fixed level scale for every background, so history never changes once drawn.
+    static constexpr float heatTopDb = -12.0f, heatRangeDb = 60.0f;
+
+    // 3D: each slice is the loudest of a few history rows, frozen once committed.
+    static constexpr int slices3d = 40;
+    static constexpr int rowsPerSlice = 3;
+    static constexpr int sliceCols = historyCols / 2;
 
     /// One side (L or R) of a slot's analysis.
     struct Side
@@ -77,6 +90,8 @@ private:
     void showSlotMenu (int slot);
     bool isVisible (int source) const noexcept;
     void addHistoryRow();
+    void commitRowTo3d (const float* row);
+    void applyAveraging();
     void rebuildWaterfallImage();
 
     juce::Rectangle<float> plotArea (juce::Rectangle<float> face, bool withHzLabels) const;
@@ -101,10 +116,14 @@ private:
 
     std::vector<float> history = std::vector<float> ((size_t) (historyCols * historyRows), -150.0f);
     int historyNewest = 0;   // row index of the newest line
-    float waterfallTop = -30.0f;
+    std::vector<float> slices = std::vector<float> ((size_t) (slices3d * sliceCols), -150.0f);
+    std::array<float, sliceCols> pendingSlice {};
+    int pendingRows = 0;
+    int sliceNewest = 0;
+    int averagingIndex = 2;
     juce::Image waterfall { juce::Image::RGB, historyCols, historyRows, true };
 
-    juce::TextButton styleButton;
+    juce::TextButton styleButton, averagingButton;
     juce::Rectangle<float> mainPanel, sidePanel;
     std::array<juce::Rectangle<float>, Sources::count> eyeRects, soloRects, nameRects;
 };

@@ -55,8 +55,9 @@ private:
     std::map<juce::String, juce::StringArray> kindsByView;
     OverlayView::Style overlayStyle = OverlayView::Style::grey3d;
     int overlayMask = 0xf;
+    int overlayAveraging = 2;
 
-    juce::ComboBox viewBox, sourceBox;
+    juce::ComboBox viewBox, sourceBox, deviceBox;
     juce::TextButton resetButton { "Reset" }, fullScreenButton { "Full screen" }, settingsButton { "Settings" };
 
     std::unique_ptr<GridView> grid;

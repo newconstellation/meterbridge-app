@@ -55,6 +55,7 @@ public:
     {
         colourButton.setTooltip ("Colour for this source's trace and badge");
         colourButton.onClick = [this] { showColourMenu(); };
+        colourButton.setColour (juce::TextButton::buttonColourId, def.colour);
         addAndMakeVisible (colourButton);
 
         name.setText (def.name, false);
@@ -94,13 +95,6 @@ public:
     SourceDef def;
     std::function<void()> onChanged, onRemove;
 
-    void paint (juce::Graphics& g) override
-    {
-        const auto swatch = colourButton.getBounds().toFloat().reduced (3.0f);
-        g.setColour (def.colour);
-        g.fillRoundedRectangle (swatch, 3.0f);
-    }
-
     void resized() override
     {
         auto r = getLocalBounds();
@@ -139,7 +133,12 @@ private:
             item.setColour (juce::Colour (c.argb));
             item.setTicked (def.colour == juce::Colour (c.argb));
             const auto colour = juce::Colour (c.argb);
-            item.setAction ([this, colour] { def.colour = colour; repaint(); changed(); });
+            item.setAction ([this, colour]
+            {
+                def.colour = colour;
+                colourButton.setColour (juce::TextButton::buttonColourId, colour);
+                changed();
+            });
             menu.addItem (item);
         }
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (colourButton));
@@ -171,10 +170,38 @@ public:
 
 //==============================================================================
 SettingsContent::SettingsContent (AudioEngine& e, AppSettings& s)
-    : engine (e), settings (s),
-      deviceSelector (e.getDeviceManager(), 0, 0, 0, 0, false, false, false, false)
+    : engine (e), settings (s)
 {
-    addAndMakeVisible (deviceSelector);
+    for (auto* box : { &typeBox, &deviceBox, &rateBox, &bufferBox })
+    {
+        styleCombo (*box);
+        addAndMakeVisible (*box);
+    }
+    deviceBox.setTooltip ("The audio device Meter Bridge reads, for example Dante Virtual Soundcard");
+
+    typeBox.onChange = [this]
+    {
+        engine.getDeviceManager().setCurrentAudioDeviceType (typeBox.getText(), true);
+        refreshChannels();
+    };
+    deviceBox.onChange = [this]
+    {
+        if (deviceBox.getSelectedId() > 0)
+            deviceError = engine.setInputDevice (deviceBox.getText());
+        refreshChannels();
+    };
+    rateBox.onChange = [this]
+    {
+        if (rateBox.getSelectedId() > 0)
+            deviceError = engine.setSampleRate ((double) rateBox.getSelectedId());
+        refreshDevice();
+    };
+    bufferBox.onChange = [this]
+    {
+        if (bufferBox.getSelectedId() > 0)
+            deviceError = engine.setBufferSize (bufferBox.getSelectedId());
+        refreshDevice();
+    };
 
     libraryList = std::make_unique<LibraryList>();
     libraryViewport.setViewedComponent (libraryList.get(), false);
@@ -228,7 +255,7 @@ SettingsContent::SettingsContent (AudioEngine& e, AppSettings& s)
     newWindowButton.onClick = [this] { if (onNewWindow) onNewWindow(); };
     addAndMakeVisible (newWindowButton);
 
-    rebuildLibraryRows();
+    refreshChannels();
     setSize (1240, 680);
 }
 
@@ -255,7 +282,57 @@ void SettingsContent::rebuildLibraryRows()
     refreshSlots();
 }
 
-void SettingsContent::refreshChannels() { rebuildLibraryRows(); }
+void SettingsContent::refreshChannels()
+{
+    refreshDevice();
+    rebuildLibraryRows();
+}
+
+void SettingsContent::refreshDevice()
+{
+    auto& dm = engine.getDeviceManager();
+
+    typeBox.clear (juce::dontSendNotification);
+    int typeId = 1;
+    for (auto* type : dm.getAvailableDeviceTypes())
+    {
+        typeBox.addItem (type->getTypeName(), typeId);
+        if (type->getTypeName() == dm.getCurrentAudioDeviceType())
+            typeBox.setSelectedId (typeId, juce::dontSendNotification);
+        ++typeId;
+    }
+    typeBox.setVisible (typeBox.getNumItems() > 1);
+
+    deviceBox.clear (juce::dontSendNotification);
+    const auto names = engine.getInputDeviceNames();
+    deviceBox.addItemList (names, 1);
+    deviceBox.setSelectedItemIndex (names.indexOf (engine.getCurrentInputDeviceName()), juce::dontSendNotification);
+    deviceBox.setTextWhenNothingSelected ("Choose an input device");
+    deviceBox.setTextWhenNoChoicesAvailable ("No input devices found");
+
+    rateBox.clear (juce::dontSendNotification);
+    bufferBox.clear (juce::dontSendNotification);
+    if (auto* device = dm.getCurrentAudioDevice())
+    {
+        for (double rate : device->getAvailableSampleRates())
+            rateBox.addItem (juce::String (rate / 1000.0, juce::roundToInt (rate) % 1000 == 0 ? 0 : 1) + " kHz", juce::roundToInt (rate));
+        rateBox.setSelectedId (juce::roundToInt (device->getCurrentSampleRate()), juce::dontSendNotification);
+
+        for (int size : device->getAvailableBufferSizes())
+            bufferBox.addItem (juce::String (size) + " samples", size);
+        bufferBox.setSelectedId (device->getCurrentBufferSizeSamples(), juce::dontSendNotification);
+
+        deviceStatus = juce::String (device->getActiveInputChannels().countNumberOfSetBits()) + " input channels open at "
+                       + juce::String (device->getCurrentSampleRate() / 1000.0, 1) + " kHz";
+    }
+    else
+    {
+        deviceStatus = "No device open";
+    }
+    if (deviceError.isNotEmpty())
+        deviceStatus = deviceError;
+    repaint();
+}
 
 void SettingsContent::refreshSlots()
 {
@@ -331,6 +408,25 @@ void SettingsContent::paint (juce::Graphics& g)
     g.fillAll (Theme::background);
 
     Theme::drawPanel (g, devicePanel.toFloat(), "Audio device", Theme::spectrumAccent);
+    {
+        g.setFont (Theme::font (12.0f, true));
+        auto label = [&g] (const juce::Component& c, const juce::String& text)
+        {
+            if (! c.isVisible())
+                return;
+            g.setColour (Theme::textSecondary);
+            g.drawText (text, c.getBounds().withX (c.getX() - 130).withWidth (122), juce::Justification::centredRight);
+        };
+        label (typeBox, "Driver");
+        label (deviceBox, "Input device");
+        label (rateBox, "Sample rate");
+        label (bufferBox, "Buffer size");
+
+        g.setFont (Theme::font (11.0f));
+        g.setColour (Theme::textSecondary);
+        g.drawFittedText (deviceStatus + "\nPick Dante Virtual Soundcard to meter Dante channels. All sources use this one device.",
+                          devicePanel.reduced (12, 10).removeFromBottom (44), juce::Justification::bottomLeft, 3);
+    }
     Theme::drawPanel (g, metersPanel.toFloat(), "Meters and launch", Theme::vuAccent);
     Theme::drawPanel (g, libraryPanel.toFloat(), "Source library", Theme::loudnessAccent);
     Theme::drawPanel (g, slotsPanel.toFloat(), "In view: slots A to D", Theme::phaseAccent);
@@ -381,7 +477,20 @@ void SettingsContent::resized()
     area.removeFromBottom (pad);
     libraryPanel = area;
 
-    deviceSelector.setBounds (devicePanel.withTrimmedTop ((int) Theme::titleHeight + 6).reduced (6));
+    {
+        auto r = devicePanel.withTrimmedTop ((int) Theme::titleHeight + 10).reduced (12, 0);
+        auto place = [&r] (juce::Component& c, int height)
+        {
+            auto row = r.removeFromTop (height);
+            r.removeFromTop (rowGap + 18);
+            c.setBounds (row.withTrimmedLeft (130));
+        };
+        if (typeBox.isVisible())
+            place (typeBox, rowH);
+        place (deviceBox, rowH + 6);
+        place (rateBox, rowH);
+        place (bufferBox, rowH);
+    }
 
     auto meters = metersPanel.withTrimmedTop ((int) Theme::titleHeight + 8).reduced (12, 0);
     for (auto& row : scales)

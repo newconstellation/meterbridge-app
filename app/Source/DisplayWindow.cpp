@@ -1,11 +1,12 @@
 #include "DisplayWindow.h"
 
 #include "AppLayouts.h"
+#include "Brand.h"
 #include "ui/Theme.h"
 
 namespace
 {
-    constexpr int toolbarHeight = 34;
+    constexpr int toolbarHeight = 44;
     constexpr int margin = 8;
     constexpr juce::uint32 hideAfterMs = 3000;
 }
@@ -19,6 +20,7 @@ DisplayContent::DisplayContent (MeterHub& h, const juce::ValueTree& state)
     source = juce::jlimit (0, Sources::count - 1, (int) state.getProperty ("source", 0));
     overlayStyle = OverlayView::styleFromId (state.getProperty ("overlayStyle", "grey3d").toString());
     overlayMask = state.getProperty ("overlayShown", 0xf);
+    overlayAveraging = state.getProperty ("overlayAveraging", 2);
     for (const auto& id : AppViews::ids())
         if (state.hasProperty ("slots_" + id))
             kindsByView[id] = juce::StringArray::fromTokens (state.getProperty ("slots_" + id).toString(), ",", {});
@@ -39,6 +41,15 @@ DisplayContent::DisplayContent (MeterHub& h, const juce::ValueTree& state)
         stateChanged();
     };
     addAndMakeVisible (sourceBox);
+
+    styleCombo (deviceBox);
+    deviceBox.setTooltip ("Input device. Every source reads from this one device.");
+    deviceBox.onChange = [this]
+    {
+        if (deviceBox.getSelectedId() > 0)
+            hub.getEngine().setInputDevice (deviceBox.getText());
+    };
+    addAndMakeVisible (deviceBox);
 
     resetButton.setTooltip ("Reset integrated loudness, peak holds and histories on every source");
     resetButton.onClick = [this]
@@ -97,6 +108,14 @@ void DisplayContent::refreshSourceNames()
                            i + 1);
     }
     sourceBox.setSelectedItemIndex (source, juce::dontSendNotification);
+
+    auto& engine = hub.getEngine();
+    const auto devices = engine.getInputDeviceNames();
+    deviceBox.clear (juce::dontSendNotification);
+    deviceBox.addItemList (devices, 1);
+    deviceBox.setSelectedItemIndex (devices.indexOf (engine.getCurrentInputDeviceName()), juce::dontSendNotification);
+    deviceBox.setTextWhenNothingSelected ("No input device");
+    deviceBox.setTextWhenNoChoicesAvailable ("No input devices");
 }
 
 juce::ValueTree DisplayContent::getState() const
@@ -106,6 +125,7 @@ juce::ValueTree DisplayContent::getState() const
     state.setProperty ("source", source, nullptr);
     state.setProperty ("overlayStyle", OverlayView::styleId (overlay != nullptr ? overlay->getStyle() : overlayStyle), nullptr);
     state.setProperty ("overlayShown", overlay != nullptr ? overlay->getShownMask() : overlayMask, nullptr);
+    state.setProperty ("overlayAveraging", overlay != nullptr ? overlay->getAveragingIndex() : overlayAveraging, nullptr);
 
     auto kinds = kindsByView;
     if (grid != nullptr)
@@ -129,6 +149,7 @@ void DisplayContent::setView (const juce::String& newView)
     {
         overlayStyle = overlay->getStyle();
         overlayMask = overlay->getShownMask();
+        overlayAveraging = overlay->getAveragingIndex();
     }
     grid.reset();
     overlay.reset();
@@ -141,6 +162,7 @@ void DisplayContent::setView (const juce::String& newView)
         overlay = std::make_unique<OverlayView>();
         overlay->setStyle (overlayStyle);
         overlay->setShownMask (overlayMask);
+        overlay->setAveragingIndex (overlayAveraging);
         overlay->onSettingsChanged = [this] { stateChanged(); };
         addAndMakeVisible (*overlay);
     }
@@ -188,7 +210,7 @@ void DisplayContent::timerCallback()
 void DisplayContent::setChromeHidden (bool hidden)
 {
     chromeHidden = hidden;
-    for (auto* c : std::initializer_list<juce::Component*> { &viewBox, &resetButton, &fullScreenButton, &settingsButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &viewBox, &deviceBox, &resetButton, &fullScreenButton, &settingsButton })
         c->setVisible (! hidden);
     sourceBox.setVisible (! hidden && overlay == nullptr);
 
@@ -240,27 +262,14 @@ void DisplayContent::paint (juce::Graphics& g)
 
     auto header = getLocalBounds().removeFromTop (toolbarHeight).reduced (margin + 4, 0);
 
-    auto brand = header.removeFromLeft (190);
-    g.setColour (Theme::textSecondary);
-    g.setFont (Theme::font (8.5f, true).withExtraKerningFactor (0.18f));
-    g.drawText ("NEW CONSTELLATION", brand.removeFromTop (14).withTrimmedTop (3), juce::Justification::centredLeft);
+    Brand::drawLogo (g, header.removeFromLeft (230).toFloat().reduced (0.0f, 5.0f));
 
-    // Wordmark: METER in the meter accents, BRIDGE in quiet grey.
-    const juce::Colour letters[] { Theme::loudnessAccent, Theme::spectrumAccent, Theme::phaseAccent, Theme::vuAccent, Theme::ppmAccent };
-    const juce::String word ("METER");
-    g.setFont (Theme::font (15.0f, true));
-    auto line = brand.withTrimmedBottom (2);
-    for (int i = 0; i < word.length(); ++i)
+    if (deviceBox.isVisible())
     {
-        g.setColour (letters[i]);
-        const auto letter = word.substring (i, i + 1);
-        const int w = juce::roundToInt (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), letter)) + 1;
-        g.drawText (letter, line.removeFromLeft (w), juce::Justification::centredLeft);
+        g.setColour (Theme::textSecondary);
+        g.setFont (Theme::font (10.5f, true));
+        g.drawText ("INPUT", deviceBox.getBounds().withX (deviceBox.getX() - 44).withWidth (40), juce::Justification::centredRight);
     }
-    line.removeFromLeft (5);
-    g.setColour (Theme::textSecondary);
-    g.setFont (Theme::font (14.0f));
-    g.drawText ("bridge", line, juce::Justification::centredLeft);
 
     g.setColour (Theme::panelEdge);
     g.drawHorizontalLine (toolbarHeight - 1, 0.0f, (float) getWidth());
@@ -272,14 +281,18 @@ void DisplayContent::resized()
 
     if (! chromeHidden)
     {
-        auto bar = area.removeFromTop (toolbarHeight).reduced (margin + 4, 5);
-        bar.removeFromLeft (200);
+        auto bar = area.removeFromTop (toolbarHeight).reduced (margin + 4, 8);
+        bar.removeFromLeft (250);
 
         settingsButton.setBounds (bar.removeFromRight (84));
         bar.removeFromRight (6);
         fullScreenButton.setBounds (bar.removeFromRight (124));
         bar.removeFromRight (6);
         resetButton.setBounds (bar.removeFromRight (64));
+        bar.removeFromRight (12);
+        deviceBox.setVisible (bar.getWidth() > 700);
+        if (deviceBox.isVisible())
+            deviceBox.setBounds (bar.removeFromRight (juce::jmin (300, bar.getWidth() - 440)).withTrimmedLeft (44));
 
         viewBox.setBounds (bar.removeFromLeft (190));
         bar.removeFromLeft (8);

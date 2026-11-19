@@ -3,7 +3,7 @@
 #include "AppSettings.h"
 #include "AudioEngine.h"
 
-#include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
 #include <memory>
@@ -21,7 +21,7 @@ public:
     SettingsContent (AudioEngine&, AppSettings&);
     ~SettingsContent() override;
 
-    /// Device channels changed: rebuild the channel menus.
+    /// Device or its channels changed: refresh the device menus and channel menus.
     void refreshChannels();
     /// A slot changed elsewhere (for example from the overlay): update the slot menus.
     void refreshSlots();
@@ -51,7 +51,10 @@ private:
     AudioEngine& engine;
     AppSettings& settings;
 
-    juce::AudioDeviceSelectorComponent deviceSelector;
+    void refreshDevice();
+
+    juce::ComboBox typeBox, deviceBox, rateBox, bufferBox;
+    juce::String deviceStatus, deviceError;
 
     std::unique_ptr<LibraryList> libraryList;
     juce::Viewport libraryViewport;
