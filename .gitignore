@@ -5,3 +5,6 @@ build/
 xcuserdata/
 DerivedData/
 .DS_Store
+build-juce/
+.tools/
+design-ref/
