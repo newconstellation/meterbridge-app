@@ -1,69 +1,84 @@
 # Meter Bridge
 
-A standalone Mac app that meters audio inputs, built for Dante Virtual
-Soundcard channels and Pro Tools aux outputs. The goal: load up to four stereo
-sources (for example four keyboards) into one colour-coded overlay
-spectrograph, so you can see which source is playing which frequencies.
+A standalone Mac app from New Constellation that meters audio inputs: Dante
+Virtual Soundcard channels, Pro Tools aux outputs, or any Core Audio device.
+Up to four sources at a time are overlaid on one spectrum, so you can see
+which source (for example which keyboard) is playing which frequencies.
 
-## Status
+It reuses the meters and look of our Prism Meter plugin (vendored in
+`third_party/prism`), built with JUCE 8 and C++20.
 
-| Step | What | State |
+## Views
+
+Each window picks a view from its toolbar. Open one window per display
+(Settings > New display window).
+
+| View | For | What it shows |
 | --- | --- | --- |
-| 1 | Input device picker, Sources A-D routing, basic L/R meters | done |
-| 2 | Overlay spectrum (curves), 1/3-octave bands, "loudest source wins" spectrogram, solo/hide | done |
-| 3 | Loudness panel: momentary, short-term, integrated LUFS, loudness range, true peak, session clock | done |
-| 4 | Testing with DVS and Pro Tools, signed release build | planned |
+| Quad (2 x 2) | 12" display, 1920 x 720 | Four Prism meters for one source; each panel's menu picks its tool |
+| Row of four | 12" display | Four meters side by side |
+| Meter panel | 8" display, 1920 x 480 | Arched LED peak + average and loudness |
+| Arched LED only | 8" display | The arched LED meter alone |
+| Spectrum overlay | any | Up to four sources as coloured traces over the sum of them, with an inputs sidebar |
 
-## Main window
+Spectrograms in the meters run vertically (newest at the top).
 
-- **Left screen:** pick *Overlay* (each source's spectrum as a coloured curve
-  with peak-hold), *Bands* (1/3-octave bars, sources side by side) or
-  *Spectrogram* (scrolling history; each pixel takes the colour of the loudest
-  source at that frequency, and mixes towards white where two clash).
-- **Right screen:** session clock, signal status, and EBU R128 loudness for the
-  chosen source (momentary bar, true-peak bar, integrated / short-term /
-  range). Reset clears the integrated reading and the clock.
-- **Bottom strip:** each enabled source with live L/R meters; the eye hides it
-  from the spectrum, S solos it.
-- **Inputs** (top bar) shows or hides the routing sidebar.
+**Overlay background** (menu in the overlay's title strip):
+- **3D** (default): the sum of the shown sources as a grey 3D surface, newest
+  slice at the front. Loud ridges warm into heat colours. Slices stack straight
+  up, so every frequency stays on its own Hz mark.
+- **Split**: traces on a clean graph, the summed heat-map waterfall below.
+- **Quiet blue**: the summed waterfall in one dim blue behind the traces.
 
-## Requirements
+In the overlay sidebar, the eye hides a source, S solos it, and clicking a
+name swaps another library source into that slot.
 
-- macOS 15 Sequoia or later
-- Xcode 15+ (or the Swift 5.9+ toolchain)
+## Sources
 
-## Run it
+Settings holds a **source library**: as many sources as you like, each with a
+name, a colour, mono or stereo, and its input channels. Up to four are in view
+at once, in slots A to D.
+
+- A stereo source takes one slot. Its trace averages the power of L and R per
+  frequency, so out-of-phase content never cancels. Loudness stays true stereo.
+- A mono source is metered as dual mono (as if panned centre).
+- The overlay background sums the power of the shown sources.
+
+## Full screen
+
+Use the toolbar's Full screen button, Ctrl-Cmd-F, or the green window button;
+each window goes full screen on its own display. While full screen, the
+toolbar and cursor hide after three idle seconds and come back when the mouse
+moves. Esc or Ctrl-Cmd-F leaves. Settings > "Full screen on launch" brings
+every window back full screen when the app opens.
+
+## Build (Mac)
 
 ```sh
-swift run MeterBridge            # quick dev run
-./scripts/build-app.sh           # builds "build/Meter Bridge.app"
-open "build/Meter Bridge.app"
+cmake -S . -B build -G Xcode            # or Ninja / Unix Makefiles
+cmake --build build --config Release --target MeterBridge
+open "build/MeterBridge_artefacts/Release/Meter Bridge.app"
 ```
 
-The app asks for audio input permission the first time. It only reads levels;
-nothing is recorded or sent anywhere. The `.app` is signed ad hoc for now, so
-the first launch needs right-click > Open.
+CMake downloads JUCE 8.0.9. To build offline, pass `-DMB_JUCE_DIR=/path/to/JUCE`.
+The app asks for microphone (audio input) permission on first launch. It only
+reads levels; nothing is recorded or sent anywhere.
 
-You can also download a built app from the **Build** workflow run on GitHub
-(artifact `MeterBridge-app`).
+### Snapshot tool
 
-## App icon
+`-DMB_BUILD_SNAPSHOT_TOOL=ON` builds `MeterBridgeSnapshot`, which renders any
+view to PNG with four synthetic keyboards and no audio device:
 
-`scripts/make-icon.py` (Pillow) draws `Resources/AppIcon.iconset`; the build
-script turns it into `AppIcon.icns`.
-
-## Routing
-
-- **Dante Virtual Soundcard:** pick it as the input device. Each source takes
-  a stereo pair of DVS channels (1-2, 3-4, ...).
-- **Pro Tools aux outputs:** send the auxes to outputs of a device the app can
-  read, for example DVS transmit channels or a loopback device, then pick
-  those pairs in Meter Bridge.
+```sh
+MeterBridgeSnapshot overlay overlay.png 8 grey3d 1920 720
+```
 
 ## Layout
 
-- `Sources/MeterBridgeCore` - UI-free logic: source setup, device choice,
-  persistence, level math, lock-free sample rings, FFT spectrum, frequency
-  maps, EBU R128 loudness and true peak. Unit tested (`swift test`).
-- `Sources/MeterBridge` - the SwiftUI app: Core Audio device discovery, a
-  real-time-safe AUHAL capture, and the views.
+- `app/Source`: the app. `AudioEngine` (device, source library, slot routing,
+  one Prism processor per slot), `MeterHub` (30 Hz UI clock), `DisplayWindow`
+  (toolbar, full screen), `GridView` (Prism meter grids), `OverlayView`,
+  `SettingsWindow`, `AppSettings` (saved state).
+- `third_party/prism`: Prism Meter's DSP core and views (see its README).
+- `tools/Snapshot.cpp`: the snapshot tool.
+- `legacy/swift`: the earlier SwiftUI prototype, kept for reference.
