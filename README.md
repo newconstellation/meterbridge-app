@@ -77,6 +77,13 @@ CMake downloads JUCE 8.0.9. To build offline, pass `-DMB_JUCE_DIR=/path/to/JUCE`
 The app asks for microphone (audio input) permission on first launch. It only
 reads levels; nothing is recorded or sent anywhere.
 
+### Installer
+
+`scripts/make-dmg.sh` builds the app and packages `dist/Meter-Bridge-<version>.dmg`
+(drag to Applications). It is signed ad hoc for now, so on another Mac the first
+launch needs right-click > Open (or Privacy & Security > Open Anyway). A Developer
+ID signature and notarisation will remove that step.
+
 ### Snapshot tool
 
 `-DMB_BUILD_SNAPSHOT_TOOL=ON` builds `MeterBridgeSnapshot`, which renders any
