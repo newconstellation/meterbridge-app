@@ -80,9 +80,17 @@ reads levels; nothing is recorded or sent anywhere.
 ### Installer
 
 `scripts/make-dmg.sh` builds the app and packages `dist/Meter-Bridge-<version>.dmg`
-(drag to Applications). It is signed ad hoc for now, so on another Mac the first
-launch needs right-click > Open (or Privacy & Security > Open Anyway). A Developer
-ID signature and notarisation will remove that step.
+(drag to Applications). With a Developer ID certificate in the keychain it signs
+the app (hardened runtime, audio-input entitlement) and the DMG; with the
+`MeterBridge` notarytool profile it also notarises and staples, so the DMG opens
+on any Mac without a warning. One-time setup:
+
+```sh
+xcrun notarytool store-credentials MeterBridge --apple-id <your Apple ID> --team-id <team ID>
+```
+
+Without a certificate it falls back to an ad-hoc build (first launch on another
+Mac needs right-click > Open).
 
 ### Snapshot tool
 
