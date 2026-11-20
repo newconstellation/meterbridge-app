@@ -4,21 +4,21 @@
 #
 #   scripts/make-dmg.sh [build-dir]      (default build dir: build-juce)
 #
-# Uses CMAKE from the environment, else .tools/bin/cmake, else cmake on PATH.
+# Signing:
+#   - With a "Developer ID Application" certificate in the keychain, the app is
+#     signed with it (hardened runtime, Resources/entitlements.plist) and so is
+#     the disk image. Pick a certificate with MB_SIGN_ID if there are several.
+#   - Without one (or with MB_SIGN_ID=-), the app is signed ad hoc and the first
+#     launch on another Mac needs right-click > Open (see "First launch.txt").
 #
-# Signing (automatic):
-# - If a "Developer ID Application" certificate is in the keychain (or SIGN_ID
-#   names one), the app is signed with it, with the hardened runtime and
-#   Resources/MeterBridge.entitlements, and the DMG is signed too.
-# - If a notarytool keychain profile exists (NOTARY_PROFILE, default
-#   "MeterBridge"), the DMG is sent to Apple for notarisation and the ticket
-#   is stapled, so it opens on any Mac without a warning. Create the profile
-#   once with:
-#     xcrun notarytool store-credentials MeterBridge --apple-id <you@example.com> --team-id <TEAMID>
-#   (it asks for an app-specific password from appleid.apple.com).
-# - Otherwise the app is signed ad hoc and the first launch on another Mac
-#   needs right-click > Open (see "First launch.txt" in the image).
-# Set SIGN_ID=- to force an ad-hoc build.
+# Notarizing (Developer ID only): the image is sent to Apple and the ticket is
+# stapled when a notarytool keychain profile exists: MB_NOTARY_PROFILE if set,
+# else "MeterBridge" or "meterbridge". Make it once per Mac with:
+#   xcrun notarytool store-credentials MeterBridge --apple-id <apple id> --team-id <team id>
+# (it asks for an app-specific password from account.apple.com).
+# Skip notarizing with MB_NOTARIZE=0.
+#
+# Uses CMAKE from the environment, else .tools/bin/cmake, else cmake on PATH.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -30,6 +30,32 @@ fi
 
 VERSION=$(sed -n 's/^project(MeterBridge VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
 APP="$BUILD_DIR/MeterBridge_artefacts/Release/Meter Bridge.app"
+ENTITLEMENTS=Resources/entitlements.plist
+
+SIGN_ID="${MB_SIGN_ID:-}"
+if [[ -z "$SIGN_ID" ]]; then
+    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null |
+              awk -F'"' '/Developer ID Application/ {print $2; exit}')
+    SIGN_ID="${SIGN_ID:--}"
+fi
+
+NOTARIZE=0
+PROFILE=""
+if [[ "$SIGN_ID" != "-" && "${MB_NOTARIZE:-1}" != "0" ]]; then
+    for candidate in ${MB_NOTARY_PROFILE:-MeterBridge meterbridge}; do
+        if xcrun notarytool history --keychain-profile "$candidate" >/dev/null 2>&1; then
+            PROFILE="$candidate"
+            NOTARIZE=1
+            break
+        fi
+    done
+    if [[ "$NOTARIZE" == "0" ]]; then
+        echo "No notarytool profile found: the image will be signed but not notarized."
+        echo "Create one with"
+        echo "  xcrun notarytool store-credentials MeterBridge --apple-id <apple id> --team-id <team id>"
+        echo "or set MB_NOTARY_PROFILE to an existing one."
+    fi
+fi
 
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     "$CMAKE" -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
@@ -38,19 +64,13 @@ fi
 
 echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/Meter Bridge")"
 
-SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)}"
-SIGN_ID="${SIGN_ID:--}"
-NOTARY_PROFILE="${NOTARY_PROFILE:-MeterBridge}"
-
 if [[ "$SIGN_ID" == "-" ]]; then
     echo "Signing ad hoc (no Developer ID certificate found)"
     codesign --force --deep --sign - "$APP"
-    SIGNED=0
 else
     echo "Signing with: $SIGN_ID"
     codesign --force --deep --options runtime --timestamp \
-             --entitlements Resources/MeterBridge.entitlements --sign "$SIGN_ID" "$APP"
-    SIGNED=1
+        --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP"
 fi
 codesign --verify --deep --strict "$APP"
 
@@ -58,19 +78,25 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/Meter Bridge.app"
 ln -s /Applications "$STAGE/Applications"
+
+if [[ "$NOTARIZE" == "1" ]]; then
+    FIRST_LAUNCH='First launch
+  Open Meter Bridge from Applications.'
+else
+    FIRST_LAUNCH='First launch (this test build is not notarised by Apple)
+  1. In Applications, right-click (or Control-click) Meter Bridge and choose Open.
+  2. Click Open in the warning. You only do this once.
+  If macOS only offers "Move to Trash" or "Done": open System Settings >
+  Privacy & Security, scroll down, and click "Open Anyway" next to Meter Bridge.'
+fi
+
 cat > "$STAGE/First launch.txt" <<TXT
 Meter Bridge $VERSION - New Constellation
 
 Install
   Drag "Meter Bridge" onto the Applications folder.
 
-First launch
-  Open Meter Bridge from Applications. If macOS says it can't check the app
-  (only for test builds that are not notarised):
-  1. In Applications, right-click (or Control-click) Meter Bridge and choose Open.
-  2. Click Open in the warning. You only do this once.
-  If macOS only offers "Move to Trash" or "Done": open System Settings >
-  Privacy & Security, scroll down, and click "Open Anyway" next to Meter Bridge.
+$FIRST_LAUNCH
 
   When asked, allow microphone access: Meter Bridge reads your audio inputs to
   show levels and spectra. Nothing is recorded or sent anywhere.
@@ -87,16 +113,14 @@ rm -f "$DMG"
 hdiutil create -volname "Meter Bridge $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
 hdiutil verify "$DMG" >/dev/null
 
-if [[ "$SIGNED" == 1 ]]; then
+if [[ "$SIGN_ID" != "-" ]]; then
     codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
-    if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
-        echo "Notarising with profile $NOTARY_PROFILE (a few minutes)..."
-        xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
-        xcrun stapler staple "$DMG"
-        spctl --assess --type open --context context:primary-signature -v "$DMG"
-    else
-        echo "No notary profile \"$NOTARY_PROFILE\": signed but not notarised (see the top of this script)."
-    fi
+fi
+if [[ "$NOTARIZE" == "1" ]]; then
+    echo "Notarizing with profile \"$PROFILE\" (usually a few minutes)..."
+    xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
+    xcrun stapler staple "$DMG"
+    spctl -a -t open --context context:primary-signature -vv "$DMG"
 fi
 
 echo "Built $DMG ($(du -h "$DMG" | cut -f1))"
