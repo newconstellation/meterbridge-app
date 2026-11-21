@@ -212,19 +212,6 @@ SettingsContent::SettingsContent (AudioEngine& e, AppSettings& s)
     addSourceButton.onClick = [this] { addSource(); };
     addAndMakeVisible (addSourceButton);
 
-    for (int i = 0; i < Sources::count; ++i)
-    {
-        auto& box = slotBoxes[(size_t) i];
-        styleCombo (box);
-        box.onChange = [this, i]
-        {
-            const int index = slotBoxes[(size_t) i].getSelectedId() - 2;   // id 1 = empty
-            const auto& lib = engine.getLibrary();
-            engine.setSlot (i, index >= 0 && index < (int) lib.size() ? lib[(size_t) index].id : juce::String());
-        };
-        addAndMakeVisible (box);
-    }
-
     const auto saved = settings.loadScales();
     for (size_t i = 0; i < scales.size(); ++i)
     {
@@ -280,7 +267,6 @@ void SettingsContent::rebuildLibraryRows()
 
     libraryList->setSize (juce::jmax (100, libraryViewport.getMaximumVisibleWidth()), libraryList->idealHeight());
     addSourceButton.setEnabled ((int) lib.size() < AudioEngine::maxMeters);
-    refreshSlots();
 }
 
 void SettingsContent::refreshChannels()
@@ -335,25 +321,6 @@ void SettingsContent::refreshDevice()
     repaint();
 }
 
-void SettingsContent::refreshSlots()
-{
-    const auto& lib = engine.getLibrary();
-    for (int i = 0; i < Sources::count; ++i)
-    {
-        auto& box = slotBoxes[(size_t) i];
-        box.clear (juce::dontSendNotification);
-        box.addItem ("(empty)", 1);
-        int selected = 1;
-        for (int k = 0; k < (int) lib.size(); ++k)
-        {
-            box.addItem (lib[(size_t) k].name.isNotEmpty() ? lib[(size_t) k].name : "Source " + juce::String (k + 1), k + 2);
-            if (lib[(size_t) k].id == engine.getSlotSourceId (i))
-                selected = k + 2;
-        }
-        box.setSelectedId (selected, juce::dontSendNotification);
-    }
-}
-
 void SettingsContent::libraryEdited()
 {
     std::vector<SourceDef> lib;
@@ -389,7 +356,7 @@ void SettingsContent::removeSource (int index)
     const auto id = lib[(size_t) index].id;
     for (int s = 0; s < Sources::count; ++s)
         if (engine.getSlotSourceId (s) == id)
-            engine.setSlot (s, {});
+            engine.setSlot (s, {});   // default inputs for new overlay windows
 
     lib.erase (lib.begin() + index);
     engine.setLibrary (std::move (lib));
@@ -432,7 +399,7 @@ void SettingsContent::paint (juce::Graphics& g)
     }
     Theme::drawPanel (g, metersPanel.toFloat(), "Meters and launch", Theme::vuAccent);
     Theme::drawPanel (g, libraryPanel.toFloat(), "Source library", Theme::loudnessAccent);
-    Theme::drawPanel (g, slotsPanel.toFloat(), "In view: slots A to D", Theme::phaseAccent);
+    Theme::drawPanel (g, slotsPanel.toFloat(), "Spectrum overlay inputs", Theme::phaseAccent);
 
     // Library column headings
     auto heads = libraryPanel.withTrimmedTop ((int) Theme::titleHeight + 6).withHeight (16).reduced (12, 0);
@@ -451,19 +418,11 @@ void SettingsContent::paint (juce::Graphics& g)
     g.drawText ("LEFT / MONO", leftHead, juce::Justification::centredLeft);
     g.drawText ("RIGHT", rightHead, juce::Justification::centredLeft);
 
-    // Slot letters
-    for (int i = 0; i < Sources::count; ++i)
-    {
-        const auto box = slotBoxes[(size_t) i].getBounds();
-        g.setColour (Theme::textSecondary);
-        g.setFont (Theme::font (12.0f, true));
-        g.drawText (Sources::letter (i), box.withX (box.getX() - 18).withWidth (14), juce::Justification::centredRight);
-    }
-
     g.setColour (Theme::textSecondary);
     g.setFont (Theme::font (10.5f));
-    g.drawText ("A stereo source uses one slot. Its trace averages L and R power, so out-of-phase parts never cancel.",
-                slotsPanel.reduced (12, 6).removeFromBottom (16), juce::Justification::centredLeft);
+    g.drawFittedText ("Each overlay window picks its own six inputs (A to F) from this library: click a name in its sidebar.\n"
+                      "A stereo source uses one slot. Its trace averages L and R power, so out-of-phase parts never cancel.",
+                      slotsPanel.withTrimmedTop ((int) Theme::titleHeight).reduced (12, 6), juce::Justification::centredLeft, 2);
 }
 
 void SettingsContent::resized()
@@ -476,7 +435,7 @@ void SettingsContent::resized()
     left.removeFromTop (pad);
     metersPanel = left;
 
-    slotsPanel = area.removeFromBottom ((int) Theme::titleHeight + 74);
+    slotsPanel = area.removeFromBottom ((int) Theme::titleHeight + 52);
     area.removeFromBottom (pad);
     libraryPanel = area;
 
@@ -513,15 +472,6 @@ void SettingsContent::resized()
     lib.removeFromBottom (8);
     libraryViewport.setBounds (lib);
     libraryList->setSize (libraryViewport.getMaximumVisibleWidth(), libraryList->idealHeight());
-
-    auto slots = slotsPanel.withTrimmedTop ((int) Theme::titleHeight + 10).reduced (12, 0).removeFromTop (rowH);
-    const int w = (slots.getWidth() - 3 * 12) / Sources::count;
-    for (auto& box : slotBoxes)
-    {
-        auto r = slots.removeFromLeft (w);
-        slots.removeFromLeft (12);
-        box.setBounds (r.withTrimmedLeft (20));
-    }
 }
 
 SettingsWindow::SettingsWindow (AudioEngine& engine, AppSettings& settings)

@@ -2,7 +2,7 @@
 
 A standalone Mac app from New Constellation that meters audio inputs: Dante
 Virtual Soundcard channels, Pro Tools aux outputs, or any Core Audio device.
-Up to four sources at a time are overlaid on one spectrum, so you can see
+Up to six sources at a time are overlaid on one spectrum, so you can see
 which source (for example which keyboard) is playing which frequencies.
 
 It reuses the meters and look of our Prism Meter plugin (vendored in
@@ -19,7 +19,7 @@ Each window picks a view from its toolbar. Open one window per display
 | Row of four | 12" display | Four meters side by side |
 | Meter panel | 8" display, 1920 x 480 | Arched LED peak + average and loudness |
 | Arched LED only | 8" display | The arched LED meter alone |
-| Spectrum overlay | any | Up to four sources as coloured traces over the sum of them, with an inputs sidebar |
+| Spectrum overlay | any | Up to six sources as coloured traces over the sum of them, with an inputs sidebar |
 
 Spectrograms in the meters run vertically (newest at the top).
 
@@ -30,12 +30,23 @@ Spectrograms in the meters run vertically (newest at the top).
 - **Split**: traces on a clean graph, the summed heat-map waterfall below.
 - **Quiet blue**: the summed waterfall in one dim blue behind the traces.
 
-**Averaging** (overlay title strip): off, 0.1, 0.3, 1 or 3 seconds, for how
-quickly the traces and the background follow the music. History is drawn on a
-fixed dB scale and never changes once drawn; it only scrolls back.
+Overlay title strip menus:
 
-In the overlay sidebar, the eye hides a source, S solos it, and clicking a
-name swaps another library source into that slot.
+- **Range**: the fixed bottom of the scale, 0 to -60, -84 (default) or -96
+  dBFS. Traces, heat maps and 3D history all use it. Nothing auto-scales.
+- **Peak**: peak hold off, 0.5, 1 (default), 3 or 10 seconds before the dashed
+  peak lines fall, or infinite. Click the spectrum to clear peaks.
+- **Avg**: off, 0.1, 0.3, 1 or 3 seconds, for how quickly the traces and the
+  background follow the music. History is drawn on a fixed dB scale and never
+  changes once drawn; it only scrolls back.
+
+In the overlay sidebar, clicking a name swaps another library source into
+that slot, the line sample sets the trace thickness (thin, normal, thick,
+heavy), the eye hides a source and S solos it.
+
+Each overlay window keeps its own six inputs and its own settings, so a second
+overlay window can watch a different set of sources. A new overlay window
+starts with the last set picked.
 
 ## Input device
 
@@ -49,8 +60,8 @@ Settings holds a **source library**: as many sources as you like, each with a
 name, a colour, mono or stereo, and its input channels. Every library source
 is metered all the time (up to 32), so the grid views (Quad, Row of four, Meter
 panel, Arched LED) can pick any of them from the toolbar, and switching shows
-its loudness history straight away. The overlay shows up to four at once, in
-slots A to D.
+its loudness history straight away. Each overlay window shows up to six at
+once, in its slots A to F.
 
 - A stereo source takes one slot. Its trace averages the power of L and R per
   frequency, so out-of-phase content never cancels. Loudness stays true stereo.
@@ -95,7 +106,7 @@ Mac needs right-click > Open).
 ### Snapshot tool
 
 `-DMB_BUILD_SNAPSHOT_TOOL=ON` builds `MeterBridgeSnapshot`, which renders any
-view to PNG with four synthetic keyboards and no audio device:
+view to PNG with five synthetic keyboards, a mono voice and no audio device:
 
 ```sh
 MeterBridgeSnapshot overlay overlay.png 8 grey3d 1920 720

@@ -13,7 +13,7 @@
 void applyMeterScales (AudioEngine&, const juce::ValueTree& scales);
 
 /// Settings, kept out of the meter windows: audio device, the source library
-/// (any number of mono or stereo sources), which four are in view slots A-D,
+/// (any number of mono or stereo sources), 
 /// meter scales, and launch options.
 class SettingsContent final : public juce::Component
 {
@@ -23,8 +23,6 @@ public:
 
     /// Device or its channels changed: refresh the device menus and channel menus.
     void refreshChannels();
-    /// A slot changed elsewhere (for example from the overlay): update the slot menus.
-    void refreshSlots();
 
     std::function<void()> onNewWindow;
 
@@ -59,8 +57,6 @@ private:
     std::unique_ptr<LibraryList> libraryList;
     juce::Viewport libraryViewport;
     juce::TextButton addSourceButton { "+ Add source" };
-
-    std::array<juce::ComboBox, Sources::count> slotBoxes;
 
     std::array<std::unique_ptr<ScaleRow>, 5> scales;
     juce::ToggleButton fullScreenOnLaunch { "Full screen on launch (each window on its own display)" };

@@ -53,9 +53,9 @@ private:
     juce::String viewId;
     juce::String sourceId;   ///< library source shown by the grid views
     std::map<juce::String, juce::StringArray> kindsByView;
-    OverlayView::Style overlayStyle = OverlayView::Style::grey3d;
-    int overlayMask = 0xf;
-    int overlayAveraging = 2;
+    /// Overlay settings (inputs, background, averaging, peak, range, line
+    /// thickness) kept while another view is showing.
+    juce::ValueTree overlayState { "Overlay" };
 
     juce::ComboBox viewBox, sourceBox, deviceBox;
     juce::TextButton resetButton { "Reset" }, fullScreenButton { "Full screen" }, settingsButton { "Settings" };

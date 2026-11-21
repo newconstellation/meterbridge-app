@@ -93,6 +93,11 @@ void SpectrumAnalyzer::reset() noexcept
     std::fill (peakDb.begin(), peakDb.end(), floorDb);
 }
 
+void SpectrumAnalyzer::resetPeaks() noexcept
+{
+    std::fill (peakDb.begin(), peakDb.end(), floorDb);
+}
+
 double SpectrumAnalyzer::getBinFrequency (int bin) const noexcept
 {
     return bin * sampleRate / fft.getSize();

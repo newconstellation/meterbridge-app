@@ -32,7 +32,7 @@ public:
     /// The meter measuring a library source, or -1.
     int meterFor (const juce::String& sourceId) const noexcept;
 
-    /// What overlay slot A-D shows now.
+    /// Default overlay inputs (A-F) for new overlay windows: the last set picked in any overlay.
     SourceConfig getSource (int slot) const { return configs[(size_t) slot]; }
     /// Any library source, by id.
     SourceConfig getSourceById (const juce::String& sourceId) const;

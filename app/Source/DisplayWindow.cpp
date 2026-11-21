@@ -20,9 +20,7 @@ DisplayContent::DisplayContent (MeterHub& h, const juce::ValueTree& state)
     sourceId = state.getProperty ("sourceId").toString();
     if (sourceId.isEmpty())   // older saved windows stored a slot number
         sourceId = hub.getEngine().getSlotSourceId (juce::jlimit (0, Sources::count - 1, (int) state.getProperty ("source", 0)));
-    overlayStyle = OverlayView::styleFromId (state.getProperty ("overlayStyle", "grey3d").toString());
-    overlayMask = state.getProperty ("overlayShown", 0xf);
-    overlayAveraging = state.getProperty ("overlayAveraging", 2);
+    overlayState = state.createCopy();
     for (const auto& id : AppViews::ids())
         if (state.hasProperty ("slots_" + id))
             kindsByView[id] = juce::StringArray::fromTokens (state.getProperty ("slots_" + id).toString(), ",", {});
@@ -137,9 +135,17 @@ juce::ValueTree DisplayContent::getState() const
     juce::ValueTree state ("Window");
     state.setProperty ("view", viewId, nullptr);
     state.setProperty ("sourceId", sourceId, nullptr);
-    state.setProperty ("overlayStyle", OverlayView::styleId (overlay != nullptr ? overlay->getStyle() : overlayStyle), nullptr);
-    state.setProperty ("overlayShown", overlay != nullptr ? overlay->getShownMask() : overlayMask, nullptr);
-    state.setProperty ("overlayAveraging", overlay != nullptr ? overlay->getAveragingIndex() : overlayAveraging, nullptr);
+    if (overlay != nullptr)
+    {
+        overlay->saveTo (state);
+    }
+    else
+    {
+        for (const auto* key : { "overlayStyle", "overlayShown", "overlayAveraging", "overlayPeak", "overlayRange",
+                                 "overlaySlots", "overlayThickness" })
+            if (overlayState.hasProperty (key))
+                state.setProperty (key, overlayState.getProperty (key), nullptr);
+    }
 
     auto kinds = kindsByView;
     if (grid != nullptr)
@@ -160,11 +166,7 @@ void DisplayContent::setView (const juce::String& newView)
     if (grid != nullptr)
         kindsByView[viewId] = grid->getKindIds();
     if (overlay != nullptr)
-    {
-        overlayStyle = overlay->getStyle();
-        overlayMask = overlay->getShownMask();
-        overlayAveraging = overlay->getAveragingIndex();
-    }
+        overlay->saveTo (overlayState);
     grid.reset();
     overlay.reset();
 
@@ -174,9 +176,7 @@ void DisplayContent::setView (const juce::String& newView)
     if (viewId == AppViews::overlay)
     {
         overlay = std::make_unique<OverlayView>();
-        overlay->setStyle (overlayStyle);
-        overlay->setShownMask (overlayMask);
-        overlay->setAveragingIndex (overlayAveraging);
+        overlay->restoreFrom (overlayState, hub.getEngine());
         overlay->onSettingsChanged = [this] { stateChanged(); };
         addAndMakeVisible (*overlay);
     }

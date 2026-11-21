@@ -4,8 +4,8 @@
 
 /// A source in the library: one input to meter, for example a stereo keyboard
 /// on two Dante Virtual Soundcard channels or a mono vocal mic. The library
-/// can hold any number of sources; up to four are active in the view slots
-/// A to D at a time.
+/// can hold any number of sources; each spectrum overlay window shows up to
+/// six of them in its slots A to F.
 struct SourceDef
 {
     juce::String id;            ///< stable, saved
@@ -38,8 +38,8 @@ struct SourceConfig
 
 namespace Sources
 {
-    /// Number of view slots (A to D).
-    inline constexpr int count = 4;
+    /// Number of overlay slots (A to F).
+    inline constexpr int count = 6;
 
     inline juce::String letter (int slot)
     {

@@ -1,9 +1,10 @@
-// Renders a Meter Bridge window to a PNG with four synthetic keyboards, for
+// Renders a Meter Bridge window to a PNG with five synthetic keyboards and a mono voice, for
 // design reviews and CI screenshots. No audio device needed.
 //
-//   MeterBridgeSnapshot <view> <out.png> [seconds] [overlayStyle] [width] [height] [sourceId]
+//   MeterBridgeSnapshot <view> <out.png> [seconds] [overlayStyle] [width] [height] [sourceId] [key=value ...]
 //   view: quad | strip4 | panel | arc | overlay | settings
 //   overlayStyle: grey3d | split | quietBlue
+//   key=value: extra window state, e.g. overlayThickness=1,3,1,0,2,1 overlayRange=0 overlayPeak=5
 
 #include "AppSettings.h"
 #include "AudioEngine.h"
@@ -55,15 +56,16 @@ int main (int argc, char* argv[])
     AudioEngine engine (settings);
     engine.getDeviceManager().closeAudioDevice();
 
-    const char* names[] { "Keys 1 · Nord", "Keys 2 · Prophet", "Keys 3 · Rhodes", "Keys 4 · Juno", "Vocal mic" };
+    const char* names[] { "Keys 1 · Nord", "Keys 2 · Prophet", "Keys 3 · Rhodes", "Keys 4 · Juno", "Keys 5 · Wurli", "Vocal mic" };
+    constexpr int numInputs = 12;
     std::vector<SourceDef> library;
-    for (int s = 0; s < 5; ++s)
+    for (int s = 0; s < 6; ++s)
         library.push_back ({ "src" + juce::String (s), juce::String::fromUTF8 (names[s]), Sources::paletteColour (s),
-                             s < 4, s * 2, s * 2 + 1 });
+                             s < 5, s * 2, s * 2 + 1 });
     engine.setLibrary (library);
     for (int s = 0; s < Sources::count; ++s)
         engine.setSlot (s, library[(size_t) s].id);
-    engine.prepareOffline (48000.0, 8);
+    engine.prepareOffline (48000.0, numInputs);
 
     MeterHub hub (engine);
 
@@ -71,7 +73,13 @@ int main (int argc, char* argv[])
     state.setProperty ("view", view, nullptr);
     state.setProperty ("overlayStyle", style, nullptr);
     if (argc > 7)
-        state.setProperty ("sourceId", juce::String (argv[7]), nullptr);   // src0 .. src4
+        state.setProperty ("sourceId", juce::String (argv[7]), nullptr);   // src0 .. src5
+    for (int a = 8; a < argc; ++a)
+    {
+        const juce::String arg (argv[a]);
+        state.setProperty (juce::Identifier (arg.upToFirstOccurrenceOf ("=", false, false)),
+                           arg.fromFirstOccurrenceOf ("=", false, false), nullptr);
+    }
     DisplayContent content (hub, state);
     content.setSize (width, height);
 
@@ -80,11 +88,13 @@ int main (int argc, char* argv[])
         Keyboard { { 220.0f, 196.0f, 261.6f, 246.9f }, 1.1f, { 0.6f, 0.4f, 0.35f, 0.3f, 0.25f, 0.2f, 0.15f, 0.12f, 0.1f }, 0.18f },
         Keyboard { { 440.0f, 392.0f, 523.3f, 349.2f }, 0.9f, { 0.8f, 0.2f, 0.12f, 0.05f }, 0.16f },
         Keyboard { { 130.8f, 164.8f, 146.8f, 110.0f }, 1.3f, { 0.7f, 0.5f, 0.4f, 0.3f, 0.2f, 0.15f, 0.1f }, 0.2f },
+        Keyboard { { 880.0f, 987.8f, 784.0f, 1046.5f }, 0.7f, { 0.5f, 0.3f, 0.2f, 0.1f, 0.06f }, 0.1f },
+        Keyboard { { 2093.0f, 2637.0f, 2349.3f, 3136.0f }, 0.5f, { 0.4f, 0.3f, 0.2f }, 0.06f },
     };
 
     constexpr double rate = 48000.0;
     constexpr int block = 1600;   // 30 blocks a second, one UI tick each
-    juce::AudioBuffer<float> buffer (8, block);
+    juce::AudioBuffer<float> buffer (numInputs, block);
     juce::Random noise (1);
     double time = 0.0;
 
@@ -100,7 +110,7 @@ int main (int argc, char* argv[])
                 buffer.setSample (s * 2 + 1, i, v * 0.9f);
             }
         }
-        engine.processInputs (buffer.getArrayOfReadPointers(), 8, block);
+        engine.processInputs (buffer.getArrayOfReadPointers(), numInputs, block);
         time += block / rate;
         hub.tick();
     }

@@ -34,6 +34,9 @@ public:
     /// Allocates. order 10..15 (1024..32768 points).
     void prepare (int fftOrder, double sampleRate);
     void reset() noexcept;
+    /// Meter Bridge local change: restart the peak curve only, so a caller can
+    /// read the loudest frame since its last read and run its own hold / release.
+    void resetPeaks() noexcept;
 
     /// 0 = no averaging, values near 1 = heavy averaging.
     void setAveraging (float amount) noexcept { averaging = amount; }

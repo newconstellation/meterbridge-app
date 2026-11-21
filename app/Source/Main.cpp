@@ -39,12 +39,7 @@ public:
         applyMeterScales (*engine, settings->loadScales());
         hub = std::make_unique<MeterHub> (*engine);
 
-        engine->onSourcesChanged = [this]
-        {
-            if (settingsWindow != nullptr)
-                settingsWindow->getContent().refreshSlots();
-            refreshSourceNames();
-        };
+        engine->onSourcesChanged = [this] { refreshSourceNames(); };
 
         engine->onDeviceChanged = [this]
         {

@@ -7,9 +7,13 @@
 #include <array>
 #include <vector>
 
-/// Up to four sources' spectra as coloured traces on one graph, with the sum
+/// Up to six sources' spectra as coloured traces on one graph, with the sum
 /// of the shown sources over time as a background, and an inputs sidebar
-/// (show / solo, integrated loudness, momentary bar).
+/// (pick, show / solo, line thickness, integrated loudness, momentary bar).
+///
+/// Each overlay keeps its own inputs (slots A to F), background, averaging,
+/// peak hold, range and line thicknesses, so two windows can watch different
+/// sets of sources.
 ///
 /// Background styles:
 /// - split:     traces on a clean graph, the summed waterfall underneath it
@@ -37,9 +41,33 @@ public:
     void setAveragingIndex (int index);
     int getAveragingIndex() const noexcept { return averagingIndex; }
 
+    /// Peak hold time choices in seconds: index 0 = off, negative = infinite (click to clear).
+    static constexpr std::array<float, 6> peakChoices { 0.0f, 0.5f, 1.0f, 3.0f, 10.0f, -1.0f };
+    void setPeakIndex (int index);
+    int getPeakIndex() const noexcept { return peakIndex; }
+
+    /// Range choices: the bottom of the scale in dBFS (the top is 0 dBFS).
+    static constexpr std::array<float, 3> rangeChoices { -60.0f, -84.0f, -96.0f };
+    void setRangeIndex (int index);
+    int getRangeIndex() const noexcept { return rangeIndex; }
+
+    /// Line thickness choices for a slot's trace, in pixels.
+    static constexpr std::array<float, 4> thicknessChoices { 1.2f, 2.2f, 3.5f, 5.0f };
+    void setThickness (int slot, int index);
+
+    /// Puts a library source (or nothing, with an empty id) in slot A-F of this overlay.
+    void setSlot (int slot, const juce::String& sourceId);
+
     /// Bit i set = source i shown.
     int getShownMask() const noexcept;
     void setShownMask (int mask);
+
+    /// Writes / reads every overlay setting as properties of a window's state.
+    /// Missing inputs fall back to the engine's defaults (the last set picked).
+    void saveTo (juce::ValueTree& state) const;
+    void restoreFrom (const juce::ValueTree& state, AudioEngine&);
+
+    void clearPeaks();
 
     std::function<void()> onSettingsChanged;
 
@@ -56,10 +84,14 @@ private:
     static constexpr int tracePoints = 240;
     static constexpr int historyCols = 360;
     static constexpr int historyRows = 160;
-    static constexpr float topDb = 0.0f, bottomDb = -84.0f;
+    static constexpr float topDb = 0.0f;
+    float bottomDb() const noexcept { return rangeChoices[(size_t) rangeIndex]; }
 
-    // Fixed level scale for every background, so history never changes once drawn.
-    static constexpr float heatTopDb = -12.0f, heatRangeDb = 60.0f;
+    // Fixed level scale for every background, so history never changes once
+    // drawn. The floors follow the chosen range (defaults: -72 and -60 dBFS).
+    static constexpr float heatTopDb = -12.0f;
+    float heatFloorDb() const noexcept { return bottomDb() + 12.0f; }
+    float floor3dDb() const noexcept { return bottomDb() + 24.0f; }
 
     // 3D: each slice is the loudest of a few history rows, frozen once committed.
     static constexpr int slices3d = 40;
@@ -80,7 +112,8 @@ private:
     {
         std::array<Side, 2> sides;
         bool stereo = true;
-        std::array<float, tracePoints> trace {}, peak {};
+        std::array<float, tracePoints> trace {}, peak {}, peakAge {};
+        double lastPeakUpdate = 0.0;
     };
 
     void prepare (double sampleRate);
@@ -88,6 +121,9 @@ private:
     float sideLevel (const Side&, float hzLo, float hzHi, bool peak) const noexcept;
     float bandLevel (const Channel&, float hzLo, float hzHi, bool peak) const noexcept;
     void showSlotMenu (int slot);
+    void showThicknessMenu (int slot);
+    void settingsChanged();
+    void updatePeaks (Channel&, const std::array<float, tracePoints>& framePeak, double now);
     bool isVisible (int source) const noexcept;
     void addHistoryRow();
     void commitRowTo3d (const float* row);
@@ -106,7 +142,9 @@ private:
     Style style = Style::grey3d;
     double sampleRate = 48000.0;
     std::array<Channel, Sources::count> channels;
-    std::array<bool, Sources::count> shown { true, true, true, true };
+    std::array<juce::String, Sources::count> slotIds;
+    std::array<int, Sources::count> thickness {};
+    std::array<bool, Sources::count> shown {};
     std::array<bool, Sources::count> enabled {};
     std::array<juce::String, Sources::count> names;
     std::array<juce::Colour, Sources::count> colours;
@@ -121,9 +159,12 @@ private:
     int pendingRows = 0;
     int sliceNewest = 0;
     int averagingIndex = 2;
+    int peakIndex = 2;
+    int rangeIndex = 1;
     juce::Image waterfall { juce::Image::RGB, historyCols, historyRows, true };
 
-    juce::TextButton styleButton, averagingButton;
+    juce::TextButton styleButton, averagingButton, peakButton, rangeButton;
+    juce::Rectangle<float> plotBounds;
     juce::Rectangle<float> mainPanel, sidePanel;
-    std::array<juce::Rectangle<float>, Sources::count> eyeRects, soloRects, nameRects;
+    std::array<juce::Rectangle<float>, Sources::count> eyeRects, soloRects, nameRects, thickRects;
 };

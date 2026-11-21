@@ -64,8 +64,145 @@ OverlayView::OverlayView()
     };
     addAndMakeVisible (averagingButton);
 
+    peakButton.setTooltip ("Peak hold: how long the dashed peak lines hold before they fall. Click the spectrum to clear them.");
+    peakButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Peak hold");
+        const char* labels[] { "Off", "0.5 s", "1 s", "3 s", "10 s", "Infinite (click the spectrum to clear)" };
+        for (int i = 0; i < (int) peakChoices.size(); ++i)
+            menu.addItem (labels[i], true, i == peakIndex, [this, i] { setPeakIndex (i); });
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (peakButton));
+    };
+
+    rangeButton.setTooltip ("Range: the fixed bottom of the level scale. The traces, heat map and 3D history all use it.");
+    rangeButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("Range (fixed scale)");
+        for (int i = 0; i < (int) rangeChoices.size(); ++i)
+            menu.addItem (juce::String::fromUTF8 ("0 to \xe2\x88\x92") + juce::String ((int) -rangeChoices[(size_t) i]) + " dBFS",
+                          true, i == rangeIndex, [this, i] { setRangeIndex (i); });
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rangeButton));
+    };
+
+    for (auto* b : { &peakButton, &rangeButton })
+    {
+        b->setColour (juce::TextButton::buttonColourId, Theme::face);
+        b->setColour (juce::TextButton::textColourOffId, Theme::spectrumAccent);
+        addAndMakeVisible (*b);
+    }
+
+    shown.fill (true);
+    thickness.fill (1);
     setStyle (Style::grey3d);
     setAveragingIndex (2);
+    setPeakIndex (2);
+    setRangeIndex (1);
+}
+
+void OverlayView::settingsChanged()
+{
+    if (onSettingsChanged)
+        onSettingsChanged();
+}
+
+void OverlayView::setPeakIndex (int index)
+{
+    peakIndex = juce::jlimit (0, (int) peakChoices.size() - 1, index);
+    const float seconds = peakChoices[(size_t) peakIndex];
+    juce::String text = peakIndex == 0 ? juce::String ("Peak: off")
+                      : seconds < 0.0f  ? juce::String ("Peak: hold")
+                                        : "Peak: " + juce::String (seconds, seconds < 1.0f ? 1 : 0) + " s";
+    peakButton.setButtonText (text + juce::String::fromUTF8 (" \xe2\x96\xbe"));
+    clearPeaks();
+    settingsChanged();
+}
+
+void OverlayView::setRangeIndex (int index)
+{
+    rangeIndex = juce::jlimit (0, (int) rangeChoices.size() - 1, index);
+    rangeButton.setButtonText (juce::String::fromUTF8 ("Range: \xe2\x88\x92") + juce::String ((int) -bottomDb())
+                               + juce::String::fromUTF8 (" dB \xe2\x96\xbe"));
+    rebuildWaterfallImage();
+    repaint();
+    settingsChanged();
+}
+
+void OverlayView::setThickness (int slot, int index)
+{
+    if (slot < 0 || slot >= Sources::count)
+        return;
+    thickness[(size_t) slot] = juce::jlimit (0, (int) thicknessChoices.size() - 1, index);
+    repaint();
+    settingsChanged();
+}
+
+void OverlayView::setSlot (int slot, const juce::String& sourceId)
+{
+    if (slot < 0 || slot >= Sources::count || slotIds[(size_t) slot] == sourceId)
+        return;
+    slotIds[(size_t) slot] = sourceId;
+    auto& c = channels[(size_t) slot];
+    for (auto& side : c.sides)
+        side.analyzer.reset();
+    c.trace.fill (-150.0f);
+    c.peak.fill (-150.0f);
+    if (engine != nullptr)
+        engine->setSlot (slot, sourceId);   // new overlay windows start from the last set picked
+    repaint();
+    settingsChanged();
+}
+
+void OverlayView::clearPeaks()
+{
+    for (auto& c : channels)
+    {
+        c.peak = c.trace;
+        c.peakAge.fill (0.0f);
+    }
+    repaint();
+}
+
+void OverlayView::saveTo (juce::ValueTree& state) const
+{
+    state.setProperty ("overlayStyle", styleId (style), nullptr);
+    state.setProperty ("overlayShown", getShownMask(), nullptr);
+    state.setProperty ("overlayAveraging", averagingIndex, nullptr);
+    state.setProperty ("overlayPeak", peakIndex, nullptr);
+    state.setProperty ("overlayRange", rangeIndex, nullptr);
+
+    juce::StringArray ids, widths;
+    for (int i = 0; i < Sources::count; ++i)
+    {
+        ids.add (slotIds[(size_t) i]);
+        widths.add (juce::String (thickness[(size_t) i]));
+    }
+    state.setProperty ("overlaySlots", ids.joinIntoString (","), nullptr);
+    state.setProperty ("overlayThickness", widths.joinIntoString (","), nullptr);
+}
+
+void OverlayView::restoreFrom (const juce::ValueTree& state, AudioEngine& e)
+{
+    engine = &e;
+    setStyle (styleFromId (state.getProperty ("overlayStyle", "grey3d").toString()));
+    int mask = state.getProperty ("overlayShown", (1 << Sources::count) - 1);
+    if (! state.hasProperty ("overlaySlots"))
+        mask |= 0x30;   // saved before slots E and F existed
+    setShownMask (mask);
+    setAveragingIndex (state.getProperty ("overlayAveraging", 2));
+    setPeakIndex (state.getProperty ("overlayPeak", 2));
+    setRangeIndex (state.getProperty ("overlayRange", 1));
+
+    const auto ids = juce::StringArray::fromTokens (state.getProperty ("overlaySlots").toString(), ",", {});
+    const auto widths = juce::StringArray::fromTokens (state.getProperty ("overlayThickness").toString(), ",", {});
+    for (int i = 0; i < Sources::count; ++i)
+    {
+        slotIds[(size_t) i] = state.hasProperty ("overlaySlots") ? (i < ids.size() ? ids[i].trim() : juce::String())
+                                                                 : e.getSlotSourceId (i);
+        thickness[(size_t) i] = juce::jlimit (0, (int) thicknessChoices.size() - 1, i < widths.size() ? widths[i].getIntValue() : 1);
+    }
+    repaint();
 }
 
 void OverlayView::setAveragingIndex (int index)
@@ -75,8 +212,7 @@ void OverlayView::setAveragingIndex (int index)
     averagingButton.setButtonText ((seconds <= 0.0f ? juce::String ("Avg: off") : "Avg: " + juce::String (seconds, seconds < 1.0f ? 1 : 0) + " s")
                                    + juce::String::fromUTF8 (" \xe2\x96\xbe"));
     applyAveraging();
-    if (onSettingsChanged)
-        onSettingsChanged();
+    settingsChanged();
 }
 
 /// Exponential averaging per analysis frame, set from the response time.
@@ -97,8 +233,7 @@ void OverlayView::setStyle (Style s)
     styleButton.setButtonText (juce::String ("Background: ") + labels[(int) s] + juce::String::fromUTF8 (" \xe2\x96\xbe"));
     rebuildWaterfallImage();
     repaint();
-    if (onSettingsChanged)
-        onSettingsChanged();
+    settingsChanged();
 }
 
 int OverlayView::getShownMask() const noexcept
@@ -131,6 +266,7 @@ void OverlayView::prepare (double rate)
         }
         c.trace.fill (-150.0f);
         c.peak.fill (-150.0f);
+        c.peakAge.fill (0.0f);
     }
     applyAveraging();
 }
@@ -140,6 +276,11 @@ void OverlayView::resetDisplay()
     for (auto& c : channels)
         for (auto& side : c.sides)
             side.analyzer.reset();
+    for (auto& c : channels)
+    {
+        c.trace.fill (-150.0f);
+        c.peak.fill (-150.0f);
+    }
     std::fill (history.begin(), history.end(), -150.0f);
     std::fill (slices.begin(), slices.end(), -150.0f);
     pendingRows = 0;
@@ -218,10 +359,16 @@ void OverlayView::update (MeterHub& hub)
     if (std::abs (engine->getSampleRate() - sampleRate) > 1.0)
         prepare (engine->getSampleRate());
 
+    const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
     bool anyFresh = false;
     for (int s = 0; s < Sources::count; ++s)
     {
-        const auto config = engine->getSource (s);
+        auto config = engine->getSourceById (slotIds[(size_t) s]);
+        if (slotIds[(size_t) s].isNotEmpty() && ! config.enabled)
+        {
+            slotIds[(size_t) s] = {};   // the source was removed from the library
+            settingsChanged();
+        }
         enabled[(size_t) s] = config.enabled;
         names[(size_t) s] = config.displayName (s);
         colours[(size_t) s] = config.colour;
@@ -248,8 +395,10 @@ void OverlayView::update (MeterHub& hub)
 
         anyFresh = true;
 
-        // Trace: loudest bin in each log band, lightly smoothed so lines stay readable.
-        std::array<float, tracePoints> raw {}, rawPeak {};
+        // Trace: loudest bin in each log band, lightly smoothed so lines stay
+        // readable. Smoothing averages power (not dB) and never lowers a point,
+        // so a narrow tone reads at its true level at every frequency.
+        std::array<float, tracePoints> raw {}, rawPeak {}, framePeak {};
         for (int i = 0; i < tracePoints; ++i)
         {
             const float lo = freqAt (((float) i - 0.5f) / (float) (tracePoints - 1));
@@ -263,18 +412,50 @@ void OverlayView::update (MeterHub& hub)
             int count = 0;
             for (int k = juce::jmax (0, i - 2); k <= juce::jmin (tracePoints - 1, i + 2); ++k, ++count)
             {
-                sum += raw[(size_t) k];
-                sumPeak += rawPeak[(size_t) k];
+                sum += dbToPower (raw[(size_t) k]);
+                sumPeak += dbToPower (rawPeak[(size_t) k]);
             }
-            c.trace[(size_t) i] = sum / (float) count;
-            c.peak[(size_t) i] = sumPeak / (float) count;
+            const auto toDb = [count] (float power) { return power > 0.0f ? 10.0f * std::log10 (power / (float) count) : -150.0f; };
+            c.trace[(size_t) i] = juce::jmax (raw[(size_t) i], toDb (sum));
+            framePeak[(size_t) i] = juce::jmax (rawPeak[(size_t) i], toDb (sumPeak));
         }
+        c.sides[0].analyzer.resetPeaks();
+        c.sides[1].analyzer.resetPeaks();
+        updatePeaks (c, framePeak, now);
     }
 
     if (anyFresh)
         addHistoryRow();
 
     repaint();
+}
+
+/// Peak hold per trace point: a new peak holds for the chosen time, then falls
+/// back towards the live level. Infinite holds until the spectrum is clicked.
+void OverlayView::updatePeaks (Channel& c, const std::array<float, tracePoints>& framePeak, double now)
+{
+    const float hold = peakChoices[(size_t) peakIndex];
+    constexpr float fallDbPerSecond = 30.0f;
+    const float dt = c.lastPeakUpdate > 0.0 ? (float) juce::jlimit (0.0, 0.5, now - c.lastPeakUpdate) : 0.0f;
+    c.lastPeakUpdate = now;
+
+    for (int i = 0; i < tracePoints; ++i)
+    {
+        auto& peak = c.peak[(size_t) i];
+        auto& age = c.peakAge[(size_t) i];
+        const float level = framePeak[(size_t) i];
+        if (level >= peak)
+        {
+            peak = level;
+            age = 0.0f;
+        }
+        else if (hold > 0.0f)
+        {
+            age += dt;
+            if (age > hold)
+                peak = juce::jmax (level, peak - fallDbPerSecond * dt);
+        }
+    }
 }
 
 /// One new line of the sum of the shown sources (power sum per frequency).
@@ -333,12 +514,12 @@ void OverlayView::rebuildWaterfallImage()
             juce::Colour colour;
             if (style == Style::split)
             {
-                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - (heatTopDb - heatRangeDb)) / heatRangeDb), 1.4f);
+                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - heatFloorDb()) / (heatTopDb - heatFloorDb())), 1.4f);
                 colour = Theme::heat (0.92f * v);
             }
             else
             {
-                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - (heatTopDb - heatRangeDb)) / heatRangeDb), 1.6f);
+                const float v = std::pow (juce::jlimit (0.0f, 1.0f, (db - heatFloorDb()) / (heatTopDb - heatFloorDb())), 1.6f);
                 const auto blue = juce::Colour::fromFloatRGBA ((20.0f + 60.0f * v) / 255.0f, (60.0f + 120.0f * v) / 255.0f,
                                                                (90.0f + 150.0f * v) / 255.0f, 1.0f);
                 colour = Theme::face.interpolatedWith (blue, 0.55f * v);
@@ -360,6 +541,8 @@ void OverlayView::resized()
     styleButton.setBounds (juce::Rectangle<float> (mainPanel.getRight() - 186.0f, mainPanel.getY() + 2.0f, 180.0f,
                                                    Theme::titleHeight - 4.0f).toNearestInt());
     averagingButton.setBounds (styleButton.getBounds().translated (-124, 0).withWidth (118));
+    peakButton.setBounds (averagingButton.getBounds().translated (-124, 0).withWidth (118));
+    rangeButton.setBounds (peakButton.getBounds().translated (-134, 0).withWidth (128));
 }
 
 juce::Rectangle<float> OverlayView::plotArea (juce::Rectangle<float> face, bool withHzLabels) const
@@ -372,10 +555,11 @@ void OverlayView::drawAxes (juce::Graphics& g, juce::Rectangle<float> face, juce
 {
     g.setFont (Theme::font (9.5f));
 
+    const float bottom = bottomDb();
     const float step = plot.getHeight() < 140.0f ? 24.0f : 12.0f;
-    for (float db = topDb; db >= bottomDb; db -= step)
+    for (float db = topDb; db >= bottom; db -= step)
     {
-        const float y = juce::jmap (db, topDb, bottomDb, plot.getY(), plot.getBottom());
+        const float y = juce::jmap (db, topDb, bottom, plot.getY(), plot.getBottom());
         g.setColour (Theme::grid);
         g.drawHorizontalLine ((int) y, plot.getX(), plot.getRight());
         g.setColour (Theme::textSecondary);
@@ -409,30 +593,36 @@ void OverlayView::drawTraces (juce::Graphics& g, juce::Rectangle<float> plot) co
             continue;
 
         const auto& c = channels[(size_t) s];
+        const float bottom = bottomDb();
         juce::Path line, peaks;
         for (int i = 0; i < tracePoints; ++i)
         {
             const float x = plot.getX() + (float) i / (float) (tracePoints - 1) * plot.getWidth();
-            const float y = juce::jmap (juce::jlimit (bottomDb, topDb, c.trace[(size_t) i]), topDb, bottomDb, plot.getY(), plot.getBottom());
-            const float py = juce::jmap (juce::jlimit (bottomDb, topDb, c.peak[(size_t) i]), topDb, bottomDb, plot.getY(), plot.getBottom());
+            const float y = juce::jmap (juce::jlimit (bottom, topDb, c.trace[(size_t) i]), topDb, bottom, plot.getY(), plot.getBottom());
+            const float py = juce::jmap (juce::jlimit (bottom, topDb, c.peak[(size_t) i]), topDb, bottom, plot.getY(), plot.getBottom());
             if (i == 0) { line.startNewSubPath (x, y); peaks.startNewSubPath (x, py); }
             else        { line.lineTo (x, y); peaks.lineTo (x, py); }
         }
 
         const auto colour = colours[(size_t) s];
 
+        const float width = thicknessChoices[(size_t) thickness[(size_t) s]];
+
         // Peak hold: thin dashed line in the source colour.
-        juce::Path dashed;
-        const float dashes[] { 6.0f, 6.0f };
-        juce::PathStrokeType (1.0f).createDashedStroke (dashed, peaks, dashes, 2);
-        g.setColour (colour.withAlpha (0.55f));
-        g.fillPath (dashed);
+        if (peakIndex != 0)
+        {
+            juce::Path dashed;
+            const float dashes[] { 6.0f, 6.0f };
+            juce::PathStrokeType (juce::jmax (1.0f, width * 0.45f)).createDashedStroke (dashed, peaks, dashes, 2);
+            g.setColour (colour.withAlpha (0.6f));
+            g.fillPath (dashed);
+        }
 
         // Black outline keeps each trace readable where lines cross.
         g.setColour (juce::Colours::black);
-        g.strokePath (line, juce::PathStrokeType (4.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath (line, juce::PathStrokeType (width + 2.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         g.setColour (colour);
-        g.strokePath (line, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath (line, juce::PathStrokeType (width, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
 
@@ -450,6 +640,7 @@ void OverlayView::drawGrey3d (juce::Graphics& g, juce::Rectangle<float> plot) co
 {
     const float depthHeight = plot.getHeight() * 0.62f;
     const float amplitude = plot.getHeight() * 0.36f;
+    const float floor3d = floor3dDb();
 
     // Back (oldest) to front (newest), so nearer ridges hide what is behind them.
     // Slices stack straight up with no perspective, so each frequency stays on
@@ -471,7 +662,7 @@ void OverlayView::drawGrey3d (juce::Graphics& g, juce::Rectangle<float> plot) co
         {
             const float u = (float) x / (float) (sliceCols - 1);
             const float px = plot.getX() + u * plot.getWidth();
-            const float level = std::pow (juce::jlimit (0.0f, 1.0f, (row[x] - (heatTopDb - 48.0f)) / 48.0f), 1.8f);
+            const float level = std::pow (juce::jlimit (0.0f, 1.0f, (row[x] - floor3d) / (heatTopDb - floor3d)), 1.8f);
             const float py = base - level * height;
             if (x == 0) ridge.startNewSubPath (px, py);
             else        ridge.lineTo (px, py);
@@ -520,6 +711,7 @@ void OverlayView::paint (juce::Graphics& g)
 
         Theme::drawFace (g, top);
         const auto plot = plotArea (top, true);
+        plotBounds = plot;
         drawAxes (g, top, plot, true);
         drawTraces (g, plot);
 
@@ -537,6 +729,7 @@ void OverlayView::paint (juce::Graphics& g)
     {
         Theme::drawFace (g, content);
         const auto plot = plotArea (content, true);
+        plotBounds = plot;
 
         if (style == Style::grey3d)
         {
@@ -568,16 +761,18 @@ void OverlayView::drawSidebar (juce::Graphics& g, juce::Rectangle<float> area)
     for (auto& r : eyeRects) r = {};
     for (auto& r : soloRects) r = {};
     for (auto& r : nameRects) r = {};
+    for (auto& r : thickRects) r = {};
 
-    // All four slots are always listed; click a name to swap in another source.
-    const float rowHeight = juce::jmin (88.0f, (content.getHeight() - 6.0f * (float) (Sources::count - 1)) / (float) Sources::count);
+    // All six slots are always listed; click a name to swap in another source.
+    const float gap = 5.0f;
+    const float rowHeight = juce::jmin (88.0f, (content.getHeight() - gap * (float) (Sources::count - 1)) / (float) Sources::count);
 
     for (int s = 0; s < Sources::count; ++s)
     {
         if (! enabled[(size_t) s])
         {
             auto row = content.removeFromTop (rowHeight);
-            content.removeFromTop (6.0f);
+            content.removeFromTop (gap);
             nameRects[(size_t) s] = row;
             g.setColour (Theme::face.withAlpha (0.6f));
             g.fillRoundedRectangle (row, 3.0f);
@@ -591,7 +786,7 @@ void OverlayView::drawSidebar (juce::Graphics& g, juce::Rectangle<float> area)
         }
 
         auto row = content.removeFromTop (rowHeight);
-        content.removeFromTop (6.0f);
+        content.removeFromTop (gap);
 
         const auto colour = colours[(size_t) s];
         const bool visible = isVisible (s);
@@ -613,8 +808,18 @@ void OverlayView::drawSidebar (juce::Graphics& g, juce::Rectangle<float> area)
         auto soloBox = head.removeFromRight (18.0f);
         head.removeFromRight (6.0f);
         auto eyeBox = head.removeFromRight (18.0f);
+        head.removeFromRight (6.0f);
+        auto thickBox = head.removeFromRight (24.0f);
         soloRects[(size_t) s] = soloBox;
         eyeRects[(size_t) s] = eyeBox;
+        thickRects[(size_t) s] = thickBox;
+
+        // Line thickness: a sample of this slot's line; click for the menu.
+        g.setColour (juce::Colour (0xff3a3f47));
+        g.fillRoundedRectangle (thickBox, 3.0f);
+        g.setColour (colour);
+        const float lw = juce::jmin (thickBox.getHeight() - 6.0f, thicknessChoices[(size_t) thickness[(size_t) s]]);
+        g.fillRoundedRectangle (thickBox.reduced (4.0f, 0.0f).withSizeKeepingCentre (thickBox.getWidth() - 8.0f, lw), lw * 0.5f);
 
         g.setColour (solo == s ? Theme::levelYellow : juce::Colour (0xff3a3f47));
         g.fillRoundedRectangle (soloBox, 3.0f);
@@ -668,9 +873,13 @@ void OverlayView::mouseDown (const juce::MouseEvent& e)
         if (eyeRects[(size_t) s].contains (p))
         {
             shown[(size_t) s] = ! shown[(size_t) s];
-            if (onSettingsChanged)
-                onSettingsChanged();
+            settingsChanged();
             repaint();
+            return;
+        }
+        if (thickRects[(size_t) s].contains (p))
+        {
+            showThicknessMenu (s);
             return;
         }
         if (soloRects[(size_t) s].contains (p))
@@ -685,6 +894,19 @@ void OverlayView::mouseDown (const juce::MouseEvent& e)
             return;
         }
     }
+
+    if (plotBounds.contains (p))
+        clearPeaks();
+}
+
+void OverlayView::showThicknessMenu (int slot)
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Line thickness, slot " + Sources::letter (slot));
+    const char* labels[] { "Thin", "Normal", "Thick", "Heavy" };
+    for (int i = 0; i < (int) thicknessChoices.size(); ++i)
+        menu.addItem (labels[i], true, i == thickness[(size_t) slot], [this, slot, i] { setThickness (slot, i); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (thickRects[(size_t) slot].toNearestInt())));
 }
 
 void OverlayView::showSlotMenu (int slot)
@@ -694,17 +916,17 @@ void OverlayView::showSlotMenu (int slot)
 
     juce::PopupMenu menu;
     menu.addSectionHeader ("Slot " + Sources::letter (slot));
-    const auto current = engine->getSlotSourceId (slot);
+    const auto current = slotIds[(size_t) slot];
     for (const auto& def : engine->getLibrary())
     {
         juce::PopupMenu::Item item (def.name + "   (" + (def.stereo ? "stereo " : "mono ") + def.channelText() + ")");
         item.setColour (def.colour);
         item.setTicked (def.id == current);
         const auto id = def.id;
-        item.setAction ([this, slot, id] { engine->setSlot (slot, id); });
+        item.setAction ([this, slot, id] { setSlot (slot, id); });
         menu.addItem (item);
     }
     menu.addSeparator();
-    menu.addItem ("Empty this slot", current.isNotEmpty(), false, [this, slot] { engine->setSlot (slot, {}); });
+    menu.addItem ("Empty this slot", current.isNotEmpty(), false, [this, slot] { setSlot (slot, {}); });
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (nameRects[(size_t) slot].toNearestInt())));
 }
